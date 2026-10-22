@@ -51,6 +51,8 @@ try {
     if (-not [IO.File]::Exists($taskScreenshot)) {throw '화면 이미지가 생성되지 않았습니다.'}
     $taskAdminSession=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskAdminReport))
     if ($taskAdminSession.launchMode -ne 'Admin' -or $taskAdminSession.accessMode -ne 'Admin' -or -not $taskAdminSession.adminVisible -or $taskAdminSession.loginDialogShown) {throw '관리자용 실행이 사용자 선택 없이 관리자 화면으로 진입하지 않았습니다.'}
+    if (($taskAdminSession.visibleMenus -join '|') -cne '내 심사 업무|AI 담당 업무|운영 관리' -or -not $taskAdminSession.deliveryVisible) {throw '관리자 실행의 개인·AI·운영 업무 구분이 적용되지 않았습니다.'}
+    if (($taskAdminSession.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가') {throw '심사 업무의 대상건 선정과 결과 평가 단계가 분리되지 않았습니다.'}
     if (-not $taskAdminSession.dropdownBindingsVerified) {throw '평가 드롭다운을 선택한 값이 실제 평가 행에 즉시 반영되지 않았습니다.'}
     if (-not $taskAdminSession.singleClickEditingVerified) {throw '문헌번호 셀을 한 번 클릭해 바로 수정할 수 없습니다.'}
     if (-not $taskAdminSession.automaticDeliveryRefreshVerified) {throw 'AI 검색 결과를 저장한 후 선택 출원의 결과·평가 화면이 자동으로 갱신되지 않았습니다.'}
@@ -88,7 +90,33 @@ try {
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskOtherReport))
     if ($taskReport.userId -ne 'U002' -or $taskReport.adminVisible -or $taskOtherCase.caseId -notin $taskReport.caseIds -or $taskCase.caseId -in $taskReport.caseIds -or $taskReport.launchMode -ne 'User' -or $taskReport.accessMode -ne 'User' -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 본인 선택과 업무 범위가 적용되지 않았습니다.'}
-    Write-Output 'PASS WPF user mode: examiner selection shows own cases and hides admin controls'
+    if ($taskReport.deliveryVisible -or ($taskReport.visibleMenus -join '|') -cne '내 심사 업무' -or $taskReport.workspaceScope -ne 'Mine' -or ($taskReport.scopeIds -join '|') -cne 'Mine') {throw '일반 심사관에게 AI 담당 업무가 보이거나 본인 외의 출원 범위가 노출되었습니다.'}
+    if (($taskReport.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가' -or -not $taskReport.selectionStepPreserved) {throw '출원을 선택했을 때 대상건 선정 단계가 유지되지 않았습니다.'}
+    Write-Output 'PASS WPF examiner mode: only personal workspace, own cases, separate selection/evaluation steps, no AI result entry'
+} finally {$taskProcess.Dispose()}
+
+# An AI examiner has two independent jobs. The AI workspace must include the
+# assigned group's cases and only the assigned AI source. Returning to personal
+# selection must restore only that examiner's own cases.
+$taskAiContext=Get-Context -Root $taskRoot -UserId U003 -AccessMode User
+$taskAiCase=New-Submission -Context $taskAiContext -Period $taskPeriod -ApplicationNumber '10-2026-0000987' -Cpc 'G06F 40/30' -RequestId ([guid]::NewGuid().ToString('N'))
+$taskExpectedAssignedIds=@(Get-Cases -Context $taskAiContext -Period $taskPeriod -Scope Assigned | ForEach-Object {$_.caseId} | Sort-Object)
+$taskExpectedPersonalIds=@(Get-Cases -Context $taskAiContext -Period $taskPeriod -Scope Mine | ForEach-Object {$_.caseId} | Sort-Object)
+$taskAiReport=Join-Path $taskOutput 'Gui.AiWorkspace.json'
+$taskAiScreenshot=Join-Path $taskOutput 'Gui.AiWorkspace.png'
+$taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -DataRoot "{1}" -SmokeTest -SmokeLoginUserId U003 -ExerciseWorkspaceSwitch -SmokeReportPath "{2}" -ScreenshotPath "{3}"' -f $taskStart,$taskRoot,$taskAiReport,$taskAiScreenshot)
+$taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
+try {
+    if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw 'AI 담당 업무와 개인 업무 전환 검증이 60초 안에 완료되지 않았습니다.'}
+    if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
+    $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskAiReport))
+    if ($taskReport.userId -ne 'U003' -or $taskReport.adminVisible -or -not $taskReport.deliveryVisible -or ($taskReport.visibleMenus -join '|') -cne '내 심사 업무|AI 담당 업무') {throw 'AI 담당자에게 개인 업무와 AI 담당 업무가 따로 표시되지 않았습니다.'}
+    if (-not $taskReport.workspaceSeparationVerified -or $taskReport.personalScope -ne 'Mine' -or $taskReport.aiScope -ne 'Assigned' -or $taskReport.workspaceScope -ne 'Mine') {throw 'AI 담당 업무와 개인 업무의 조회 범위가 전환에 따라 분리되지 않았습니다.'}
+    if ((@($taskReport.aiCaseIds | Sort-Object) -join '|') -cne ($taskExpectedAssignedIds -join '|') -or $taskOtherCase.caseId -notin $taskReport.aiCaseIds) {throw 'AI 담당 업무에서 배정 그룹의 다른 심사관 출원을 조회하지 못했습니다.'}
+    if ((@($taskReport.personalCaseIds | Sort-Object) -join '|') -cne ($taskExpectedPersonalIds -join '|') -or $taskAiCase.caseId -notin $taskReport.personalCaseIds -or $taskOtherCase.caseId -in $taskReport.personalCaseIds -or (@($taskReport.caseIds | Sort-Object) -join '|') -cne ($taskExpectedPersonalIds -join '|')) {throw '개인 업무로 돌아온 뒤 본인 출원 외의 담당 그룹 출원이 남아 있습니다.'}
+    if (($taskReport.aiSourceIds -join '|') -cne 'S03') {throw 'AI 담당 업무에서 배정되지 않은 AI 또는 일반 조사 방식이 노출되었습니다.'}
+    if (($taskReport.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가' -or -not $taskReport.selectionStepPreserved) {throw 'AI 담당자의 개인 대상건 선정과 결과 평가 단계가 섞였습니다.'}
+    Write-Output 'PASS WPF AI examiner mode: assigned group/source entry, independent personal selection/evaluation, own-case scope restored after workspace switch'
 } finally {$taskProcess.Dispose()}
 
 # Selecting a user who holds both roles through the user launcher must still
@@ -102,5 +130,6 @@ try {
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskRestrictedReport))
     if ($taskReport.userId -ne 'U001' -or $taskReport.adminVisible -or $taskReport.accessMode -ne 'User' -or 'All' -in $taskReport.scopeIds -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 관리자 역할이 활성화되었습니다.'}
+    if (($taskReport.visibleMenus -join '|') -cne '내 심사 업무|AI 담당 업무' -or $taskReport.workspaceScope -ne 'Mine') {throw '중복 역할 사용자도 개인 업무와 AI 담당 업무를 구분해야 합니다.'}
     Write-Output 'PASS WPF user mode: selecting an admin/examiner account does not enable administrator menus or full-scope access'
 } finally {$taskProcess.Dispose()}

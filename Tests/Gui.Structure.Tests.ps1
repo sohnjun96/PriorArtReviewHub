@@ -106,7 +106,25 @@ try {
         if ($grid.CanUserAddRows -or $grid.CanUserDeleteRows -or $grid.AutoGenerateColumns) { throw "Grid '$gridName' permits uncontrolled row/column creation." }
     }
     $headers = @($window.FindName('MainTabs').Items | ForEach-Object { $_.Header })
-    if (($headers -join '|') -cne '대상건 선정|AI 검색 결과 입력|AI 검색 결과 평가|운영 관리') { throw 'The requested consolidated menus are missing.' }
+    if (($headers -join '|') -cne '내 심사 업무|AI 담당 업무|운영 관리') { throw 'Examiner work, assigned AI work and administrator work must have separate workspaces.' }
+    $mainNames = @($window.FindName('MainTabs').Items | ForEach-Object { $_.Name })
+    if (($mainNames -join '|') -cne 'PersonalWorkTab|DeliveryTab|AdminTab') { throw 'The role workspaces must remain independent top-level tabs.' }
+    $personalTabs = $window.FindName('PersonalTabs')
+    if ($null -eq $personalTabs -or (($personalTabs.Items | ForEach-Object { $_.Header }) -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가') { throw 'Target selection and result evaluation must be separate examiner steps.' }
+    if ((($personalTabs.Items | ForEach-Object { $_.Name }) -join '|') -cne 'TargetSelectionTab|EvaluationTab') { throw 'The personal workspace must expose separate selection and evaluation tabs.' }
+    if ($null -ne $window.FindName('TargetTabs') -or $null -ne $window.FindName('GoDeliveryButton')) { throw 'Target selection must not contain a mixed delivery lookup tab or a shortcut into assigned AI work.' }
+    $evaluationTabs = $window.FindName('EvaluationTabs')
+    if ($null -eq $evaluationTabs -or $evaluationTabs.Items.Count -ne 2 -or $evaluationTabs.SelectedIndex -ne 1) { throw 'The evaluation step must separate delivered results from evaluation entry and open evaluation entry by default.' }
+    if ((($evaluationTabs.Items | ForEach-Object { $_.Header }) -join '|') -cne '결과 조회|평가 입력') { throw 'Delivered results and evaluation entry must have distinct sub-tabs.' }
+    [xml]$mainXml = [IO.File]::ReadAllText((Join-Path $appPath 'Views/Main.xaml'))
+    $xmlNamespaces = New-Object Xml.XmlNamespaceManager($mainXml.NameTable)
+    $xmlNamespaces.AddNamespace('w', 'http://schemas.microsoft.com/winfx/2006/xaml/presentation')
+    $xmlNamespaces.AddNamespace('x', 'http://schemas.microsoft.com/winfx/2006/xaml')
+    foreach ($controlName in @('PublishedGrid', 'RatingsGrid', 'RankGrid')) {
+        if ($null -eq $mainXml.SelectSingleNode("//w:TabItem[@x:Name='EvaluationTab']//*[@x:Name='$controlName']", $xmlNamespaces)) { throw "Control '$controlName' must belong to the evaluation step." }
+    }
+    if ($null -ne $mainXml.SelectSingleNode("//w:TabItem[@x:Name='TargetSelectionTab']//*[@x:Name='PublishedGrid' or @x:Name='RatingsGrid' or @x:Name='DocumentsGrid']", $xmlNamespaces)) { throw 'The selection step must only register and select target cases.' }
+    if ($null -eq $mainXml.SelectSingleNode("//w:TabItem[@x:Name='DeliveryTab']//*[@x:Name='DocumentsGrid']", $xmlNamespaces)) { throw 'AI result entry must belong to the assigned AI workspace.' }
     $ratingsGrid = $window.FindName('RatingsGrid')
     $ratingHeaders = @($ratingsGrid.Columns | ForEach-Object { $_.Header })
     if (($ratingHeaders -join '|') -cne '조사 방식|문헌|점수(0~5점)|인용여부(O/X)|비고') { throw 'Evaluation grid must contain exactly the requested five columns.' }
@@ -137,5 +155,5 @@ try {
             if (-not $loginWindow.FindName($controlName)) { throw "Login control is missing: $controlName" }
         }
     } finally { $loginWindow.Close() }
-    Write-Host ('GUI structure passed: {0} referenced controls, {1} event bindings, administrator forms, immediate dropdown bindings, valid WPF XAML (PowerShell {2}).' -f $controlReferences.Count, $eventReferences.Count, $PSVersionTable.PSVersion)
+    Write-Host ('GUI structure passed: {0} referenced controls, {1} event bindings, separate role workspaces and examiner steps, administrator forms, immediate dropdown bindings, valid WPF XAML (PowerShell {2}).' -f $controlReferences.Count, $eventReferences.Count, $PSVersionTable.PSVersion)
 } finally { $window.Close() }

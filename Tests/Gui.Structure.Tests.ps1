@@ -3,43 +3,139 @@ Set-StrictMode -Version 2.0
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'Run this test with powershell.exe -STA or pwsh.exe -STA.' }
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 $appPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../App'))
-$source = [IO.File]::ReadAllText((Join-Path $appPath 'Start.ps1'))
-$tokens = $null
-$parseErrors = $null
-$null = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$parseErrors)
-if (@($parseErrors).Count) { throw ('GUI PowerShell syntax errors: ' + ($parseErrors -join '; ')) }
-$reader = [Xml.XmlReader]::Create((Join-Path $appPath 'Views/Main.xaml'))
-try { $window = [Windows.Markup.XamlReader]::Load($reader) }
-finally { $reader.Close() }
+$scriptPaths = @((Join-Path $appPath 'Start.ps1')) + @(Get-ChildItem -LiteralPath (Join-Path $appPath 'Ui') -Filter '*.ps1' -File | ForEach-Object { $_.FullName })
+$sourceParts = @()
+foreach ($scriptPath in $scriptPaths) {
+    $part = [IO.File]::ReadAllText($scriptPath)
+    $tokens = $null
+    $parseErrors = $null
+    $null = [Management.Automation.Language.Parser]::ParseInput($part, [ref]$tokens, [ref]$parseErrors)
+    if (@($parseErrors).Count) { throw ('GUI PowerShell syntax errors in {0}: {1}' -f $scriptPath, ($parseErrors -join '; ')) }
+    $sourceParts += $part
+}
+$source = $sourceParts -join [Environment]::NewLine
+function Read-TestView([string]$Name) {
+    $reader = [Xml.XmlReader]::Create((Join-Path $appPath ('Views/' + $Name + '.xaml')))
+    try { return [Windows.Markup.XamlReader]::Load($reader) }
+    finally { $reader.Close() }
+}
+function Find-TestControl([string]$Name) {
+    $control = $window.FindName($Name)
+    if ($null -eq $control) { $control = $adminView.FindName($Name) }
+    return $control
+}
+function Get-TestDescendants($Root) {
+    if ($null -eq $Root) { return }
+    $Root
+    $childCount = [Windows.Media.VisualTreeHelper]::GetChildrenCount($Root)
+    for ($index = 0; $index -lt $childCount; $index++) {
+        Get-TestDescendants ([Windows.Media.VisualTreeHelper]::GetChild($Root, $index))
+    }
+}
+function Assert-ChoiceColumn($Grid, [int]$ColumnIndex, [string]$Property, [string[]]$ExpectedValues, [bool]$RequireNoResultsGuard = $false) {
+    $column = $Grid.Columns[$ColumnIndex]
+    if ($column -isnot [Windows.Controls.DataGridTemplateColumn] -or $null -eq $column.CellTemplate) {
+        throw "Column '$($column.Header)' must show a dropdown without first entering cell edit mode."
+    }
+    $content = $column.CellTemplate.LoadContent()
+    $combo = @(Get-TestDescendants $content | Where-Object { $_ -is [Windows.Controls.ComboBox] }) | Select-Object -First 1
+    if ($null -eq $combo -or $combo.IsEditable -or $combo.SelectedValuePath -cne 'Tag') {
+        throw "Column '$($column.Header)' must have a fixed dropdown using item values."
+    }
+    $binding = [Windows.Data.BindingOperations]::GetBinding($combo, [Windows.Controls.Primitives.Selector]::SelectedValueProperty)
+    if ($null -eq $binding -or $binding.Path.Path -cne $Property -or $binding.Mode -ne [Windows.Data.BindingMode]::TwoWay -or $binding.UpdateSourceTrigger -ne [Windows.Data.UpdateSourceTrigger]::PropertyChanged) {
+        throw "Column '$($column.Header)' must write its selected value immediately into '$Property'."
+    }
+    $values = @($combo.Items | ForEach-Object { [string]$_.Tag })
+    if (($values -join '|') -cne ($ExpectedValues -join '|')) {
+        throw "Column '$($column.Header)' has unexpected choices: $($values -join ', ')."
+    }
+    # Always visible template controls need a separate read-only session guard.
+    $hasReadOnlyGuard = $false
+    $hasNoResultsGuard = $false
+    $style = $combo.Style
+    while ($null -ne $style) {
+        foreach ($trigger in @($style.Triggers)) {
+            if ($trigger -is [Windows.DataTrigger] -and $trigger.Binding -is [Windows.Data.Binding] -and $trigger.Binding.Path.Path -ceq 'IsReadOnly' -and $trigger.Binding.RelativeSource.AncestorType -eq [Windows.Controls.DataGrid] -and [string]$trigger.Value -ieq 'True') {
+                foreach ($setter in @($trigger.Setters)) {
+                    if ($setter -is [Windows.Setter] -and $setter.Property -eq [Windows.UIElement]::IsEnabledProperty -and [string]$setter.Value -ieq 'False') { $hasReadOnlyGuard = $true }
+                }
+            }
+            if ($trigger -is [Windows.DataTrigger] -and $trigger.Binding -is [Windows.Data.Binding] -and $trigger.Binding.Path.Path -ceq 'noResults' -and [string]$trigger.Value -ieq 'True') {
+                foreach ($setter in @($trigger.Setters)) {
+                    if ($setter -is [Windows.Setter] -and $setter.Property -eq [Windows.UIElement]::IsEnabledProperty -and [string]$setter.Value -ieq 'False') { $hasNoResultsGuard = $true }
+                }
+            }
+        }
+        $style = $style.BasedOn
+    }
+    if (-not $hasReadOnlyGuard) { throw "Column '$($column.Header)' leaves its dropdown editable in a read-only grid." }
+    if ($RequireNoResultsGuard -and -not $hasNoResultsGuard) { throw "Column '$($column.Header)' allows ranking an empty search result." }
+}
+function Assert-AdminChoiceColumn($Grid, [int]$ColumnIndex, [string]$Field, [string]$ValuePath) {
+    $column = $Grid.Columns[$ColumnIndex]
+    if ($column -isnot [Windows.Controls.DataGridTemplateColumn] -or $null -eq $column.CellTemplate) { throw "Administrator column '$($column.Header)' must show a dropdown immediately." }
+    $content = $column.CellTemplate.LoadContent()
+    $combo = @(Get-TestDescendants $content | Where-Object { $_ -is [Windows.Controls.ComboBox] }) | Select-Object -First 1
+    if ($null -eq $combo -or $combo.IsEditable -or $combo.DisplayMemberPath -cne 'displayName' -or $combo.SelectedValuePath -cne $ValuePath) { throw "Administrator column '$($column.Header)' must select a named record instead of entering an ID." }
+    $binding = [Windows.Data.BindingOperations]::GetBinding($combo, [Windows.Controls.Primitives.Selector]::SelectedValueProperty)
+    if ($null -eq $binding -or $binding.Path.Path -cne $Field -or $binding.Mode -ne [Windows.Data.BindingMode]::TwoWay -or $binding.UpdateSourceTrigger -ne [Windows.Data.UpdateSourceTrigger]::PropertyChanged) { throw "Administrator column '$($column.Header)' must apply the selected record immediately." }
+}
+$window = Read-TestView Main
 try {
+    $hostControl = $window.FindName('AdminContentHost')
+    if ($null -eq $hostControl -or $hostControl -isnot [Windows.Controls.ContentControl]) { throw 'Main view must host the administrator forms.' }
+    $script:appDirectory = $appPath
+    $script:ui = @{AdminContentHost=$hostControl}
+    . (Join-Path $appPath 'Ui/Admin.ps1')
+    Initialize-AdminUi
+    $adminView = $script:adminView
     $controlReferences = @([regex]::Matches($source, '\$ui\.([A-Za-z][A-Za-z0-9_]*)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     foreach ($name in $controlReferences) {
-        if ($null -eq $window.FindName($name)) { throw "Start.ps1 refers to missing XAML control '$name'." }
+        if ($null -eq (Find-TestControl $name)) { throw "GUI scripts refer to missing XAML control '$name'." }
     }
     $eventReferences = @([regex]::Matches($source, '\$ui\.([A-Za-z][A-Za-z0-9_]*)\.Add_([A-Za-z][A-Za-z0-9_]*)\('))
     foreach ($reference in $eventReferences) {
         $name = $reference.Groups[1].Value
         $eventName = $reference.Groups[2].Value
-        $control = $window.FindName($name)
-        if ($null -eq $control.GetType().GetEvent($eventName)) {
-            throw "Control '$name' has no event '$eventName'."
-        }
+        $control = Find-TestControl $name
+        if ($null -eq $control.GetType().GetEvent($eventName)) { throw "Control '$name' has no event '$eventName'." }
     }
-    foreach ($gridName in @('DocumentsGrid', 'RankGrid', 'RatingsGrid', 'SubmissionRowsGrid')) {
-        $grid = $window.FindName($gridName)
-        if ($grid.CanUserAddRows -or $grid.CanUserDeleteRows -or $grid.AutoGenerateColumns) {
-            throw "Grid '$gridName' permits uncontrolled row/column creation."
-        }
+    foreach ($gridName in @('DocumentsGrid', 'RankGrid', 'RatingsGrid', 'SubmissionRowsGrid', 'PeriodMembersGrid', 'PeriodAssignmentsGrid')) {
+        $grid = Find-TestControl $gridName
+        if ($grid.CanUserAddRows -or $grid.CanUserDeleteRows -or $grid.AutoGenerateColumns) { throw "Grid '$gridName' permits uncontrolled row/column creation." }
     }
-    $headers=@($window.FindName('MainTabs').Items | ForEach-Object {$_.Header})
-    if (($headers -join '|') -cne '대상건 선정|AI 검색 결과 입력|AI 검색 결과 평가|운영 관리') {throw 'The requested consolidated menus are missing.'}
-    $ratingHeaders=@($window.FindName('RatingsGrid').Columns | ForEach-Object {$_.Header})
-    if (($ratingHeaders -join '|') -cne '조사 방식|문헌|점수(0~5점)|인용여부(O/X)|비고') {throw 'Evaluation grid must contain exactly the requested five columns.'}
-    if ($null -ne $window.FindName('UserSidBox')) {throw 'User registration must not request a Windows SID.'}
-    $loginReader=[Xml.XmlReader]::Create((Join-Path $appPath 'Views/Login.xaml'))
-    try {$loginWindow=[Windows.Markup.XamlReader]::Load($loginReader)} finally {$loginReader.Close()}
-    foreach ($controlName in @('LoginUsersList','LoginSearchBox','LoginButton','LoginRefreshButton','LoginStatusText')) {if (-not $loginWindow.FindName($controlName)) {throw "Login control is missing: $controlName"}}
-    $loginWindow.Close()
-    Write-Host ('GUI structure passed: {0} referenced controls, {1} event bindings, valid WPF XAML (PowerShell {2}).' -f $controlReferences.Count, $eventReferences.Count, $PSVersionTable.PSVersion)
-}
-finally { $window.Close() }
+    $headers = @($window.FindName('MainTabs').Items | ForEach-Object { $_.Header })
+    if (($headers -join '|') -cne '대상건 선정|AI 검색 결과 입력|AI 검색 결과 평가|운영 관리') { throw 'The requested consolidated menus are missing.' }
+    $ratingsGrid = $window.FindName('RatingsGrid')
+    $ratingHeaders = @($ratingsGrid.Columns | ForEach-Object { $_.Header })
+    if (($ratingHeaders -join '|') -cne '조사 방식|문헌|점수(0~5점)|인용여부(O/X)|비고') { throw 'Evaluation grid must contain exactly the requested five columns.' }
+    Assert-ChoiceColumn $ratingsGrid 2 scoreText @('', '0', '1', '2', '3', '4', '5')
+    Assert-ChoiceColumn $ratingsGrid 3 citedText @('', 'O', 'X')
+    Assert-ChoiceColumn ($window.FindName('RankGrid')) 2 choice @('', '1', '2', '3', '순위 외', '평가 제외', '비교 불가', '결과 없음') $true
+    $membersGrid = Find-TestControl PeriodMembersGrid
+    $assignmentsGrid = Find-TestControl PeriodAssignmentsGrid
+    if ($membersGrid.Columns.Count -ne 2 -or $assignmentsGrid.Columns.Count -ne 3) { throw 'Month settings must show named participants and AI assignments.' }
+    Assert-AdminChoiceColumn $membersGrid 0 userId userId
+    Assert-AdminChoiceColumn $membersGrid 1 groupId groupId
+    Assert-AdminChoiceColumn $assignmentsGrid 0 userId userId
+    Assert-AdminChoiceColumn $assignmentsGrid 1 groupId groupId
+    Assert-AdminChoiceColumn $assignmentsGrid 2 sourceId sourceId
+    foreach ($name in @('AdminKindCombo', 'AdminUserCombo', 'AdminGroupCombo', 'AdminSourceCombo', 'AdminPeriodCombo', 'SourceTypeCombo', 'PeriodYearCombo', 'PeriodMonthCombo')) {
+        $combo = Find-TestControl $name
+        if ($combo -isnot [Windows.Controls.ComboBox] -or $combo.IsEditable) { throw "Administrator selector '$name' must use predefined dropdown choices." }
+    }
+    foreach ($name in @('UserBureauBox', 'UserDivisionBox')) {
+        $combo = Find-TestControl $name
+        if ($combo -isnot [Windows.Controls.ComboBox] -or -not $combo.IsEditable) { throw "Organization selector '$name' must support choosing an existing value or entering a new value." }
+    }
+    if ($null -ne (Find-TestControl 'UserSidBox')) { throw 'User registration must not request a Windows SID.' }
+    if ($null -ne (Find-TestControl 'AdminJsonBox')) { throw 'Administrator settings must use forms instead of a JSON editor.' }
+    $loginWindow = Read-TestView Login
+    try {
+        foreach ($controlName in @('LoginUsersList', 'LoginSearchBox', 'LoginButton', 'LoginRefreshButton', 'LoginStatusText')) {
+            if (-not $loginWindow.FindName($controlName)) { throw "Login control is missing: $controlName" }
+        }
+    } finally { $loginWindow.Close() }
+    Write-Host ('GUI structure passed: {0} referenced controls, {1} event bindings, administrator forms, immediate dropdown bindings, valid WPF XAML (PowerShell {2}).' -f $controlReferences.Count, $eventReferences.Count, $PSVersionTable.PSVersion)
+} finally { $window.Close() }

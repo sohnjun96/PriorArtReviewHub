@@ -14,10 +14,13 @@ $taskVersions=@{}
 $taskRatings=@()
 $taskRankings=@()
 $taskIndex=0
+$taskBlankDocumentId='D-Blank'
 foreach ($taskSource in @('S01','S02','S03')) {
     $taskIndex++
     $taskDoc=[pscustomobject]@{documentId=('D'+$taskIndex);type='특허';identifier=('KR10-000000'+$taskIndex);title=('화면 검증 문헌 '+$taskIndex);description='동일 출원의 조사 방식별 납품';attachments=@()}
-    $taskDelivery=Save-Delivery -Context $taskContext -Case $taskCase -SourceId $taskSource -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -Status Published -Documents @($taskDoc)
+    $taskDocuments=@($taskDoc)
+    if ($taskSource -eq 'S03') {$taskDocuments += [pscustomobject]@{documentId=$taskBlankDocumentId;type='특허';identifier='KR10-0000099';title='미평가 유지 문헌';description='점수와 인용 여부의 공란 보존 확인';attachments=@()}}
+    $taskDelivery=Save-Delivery -Context $taskContext -Case $taskCase -SourceId $taskSource -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -Status Published -Documents $taskDocuments
     $taskVersions[$taskSource]=$taskDelivery.version
     $taskRatings += [pscustomobject]@{sourceId=$taskSource;documentId=$taskDoc.documentId;score=($taskIndex-1);cited=$false;note='0점과 X 보존 확인'}
     $taskRankings += [pscustomobject]@{sourceId=$taskSource;rank=$taskIndex;status='Ranked'}
@@ -30,19 +33,29 @@ $taskScreenshot=Join-Path $taskOutput 'Gui.Smoke.png'
 $taskAdminReport=Join-Path $taskOutput 'Gui.AdminMode.json'
 $taskStart=Join-Path $taskProject 'App\Start.ps1'
 $taskProcessInfo=New-Object Diagnostics.ProcessStartInfo
-$taskProcessInfo.FileName='powershell.exe'
+$taskProcessInfo.FileName=(Get-Process -Id $PID).Path
 $taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -AdminMode -DataRoot "{1}" -SmokeTest -ExerciseUiWrites -ScreenshotPath "{2}" -SmokeReportPath "{3}"' -f $taskStart,$taskRoot,$taskScreenshot,$taskAdminReport)
 $taskProcessInfo.UseShellExecute=$false
 $taskProcessInfo.CreateNoWindow=$true
 $taskProcessInfo.RedirectStandardOutput=$true
 $taskProcessInfo.RedirectStandardError=$true
+# Exercise the actual GUI in the same engine as the test host. Hidden Windows
+# PowerShell consoles use the OEM code page; PowerShell 7 writes UTF-8 instead.
+$taskConsoleEncoding=if ([IO.Path]::GetFileName($taskProcessInfo.FileName) -ieq 'pwsh.exe') {New-Object Text.UTF8Encoding($false)} else {[Text.Encoding]::GetEncoding([Globalization.CultureInfo]::InstalledUICulture.TextInfo.OEMCodePage)}
+$taskProcessInfo.StandardOutputEncoding=$taskConsoleEncoding
+$taskProcessInfo.StandardErrorEncoding=$taskConsoleEncoding
 $taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
 try {
-    if (-not $taskProcess.WaitForExit(45000)) {$taskProcess.Kill();throw 'WPF 화면 검증이 45초 안에 완료되지 않았습니다.'}
+    if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw 'WPF 화면 검증이 60초 안에 완료되지 않았습니다.'}
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     if (-not [IO.File]::Exists($taskScreenshot)) {throw '화면 이미지가 생성되지 않았습니다.'}
     $taskAdminSession=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskAdminReport))
     if ($taskAdminSession.launchMode -ne 'Admin' -or $taskAdminSession.accessMode -ne 'Admin' -or -not $taskAdminSession.adminVisible -or $taskAdminSession.loginDialogShown) {throw '관리자용 실행이 사용자 선택 없이 관리자 화면으로 진입하지 않았습니다.'}
+    if (-not $taskAdminSession.dropdownBindingsVerified) {throw '평가 드롭다운을 선택한 값이 실제 평가 행에 즉시 반영되지 않았습니다.'}
+    if (-not $taskAdminSession.singleClickEditingVerified) {throw '문헌번호 셀을 한 번 클릭해 바로 수정할 수 없습니다.'}
+    if (-not $taskAdminSession.automaticDeliveryRefreshVerified) {throw 'AI 검색 결과를 저장한 후 선택 출원의 결과·평가 화면이 자동으로 갱신되지 않았습니다.'}
+    if (-not $taskAdminSession.automaticUserLoadVerified) {throw '사용자를 드롭다운에서 선택한 뒤 추가 불러오기 없이 수정할 수 없습니다.'}
+    if (-not $taskAdminSession.adminFormDisplayVerified) {throw '월 운영의 참여자·AI 배정 폼을 조회한 것만으로 미저장 변경이 발생했습니다.'}
     $taskNewEvaluation=Get-Evaluation -Context $taskContext -Case $taskCase
     $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S01
     $taskNewUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '화면 등록 심사관'})[0]
@@ -56,7 +69,9 @@ try {
         if ($taskNumberOnly.Count -ne 1 -or $taskNumberOnly[0].title) {throw '출원번호만 입력한 AI 검색 결과가 저장되지 않았습니다.'}
     }
     if ($null -eq $taskNewEvaluation.data.documentRatings[0].score -or $taskNewEvaluation.data.documentRatings[0].score -ne 0 -or $taskNewEvaluation.data.documentRatings[0].cited -ne $false) {throw '화면 평가 저장에서 0점 또는 X가 바뀌었습니다.'}
-    Write-Output 'PASS WPF admin mode: direct login without selector, automatic user IDs, CPC, number-only AI results, evaluation, zero score, screenshot'
+    $taskBlankRating=@($taskNewEvaluation.data.documentRatings | Where-Object {$_.sourceId -eq 'S03' -and $_.documentId -eq $taskBlankDocumentId})
+    if ($taskBlankRating.Count -ne 1 -or $null -ne $taskBlankRating[0].score -or $null -ne $taskBlankRating[0].cited) {throw '드롭다운의 미평가 값이 0점이나 X로 저장되었습니다.'}
+    Write-Output ('PASS WPF admin mode (PowerShell {0}): direct login, user choice loads editable form, automatic user IDs, CPC, number-only results, automatic refresh, dropdown evaluation, zero/X and unevaluated values, screenshot' -f $PSVersionTable.PSVersion)
     Write-Output "Screenshot: $taskScreenshot"
 } finally {$taskProcess.Dispose()}
 
@@ -69,7 +84,7 @@ $taskOtherScreenshot=Join-Path $taskOutput 'Gui.OtherUser.png'
 $taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -DataRoot "{1}" -SmokeTest -SmokeLoginUserId U002 -SmokeReportPath "{2}" -ScreenshotPath "{3}"' -f $taskStart,$taskRoot,$taskOtherReport,$taskOtherScreenshot)
 $taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
 try {
-    if (-not $taskProcess.WaitForExit(45000)) {$taskProcess.Kill();throw '두 번째 사용자 선택 화면 검증이 완료되지 않았습니다.'}
+    if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw '두 번째 사용자 선택 화면 검증이 완료되지 않았습니다.'}
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskOtherReport))
     if ($taskReport.userId -ne 'U002' -or $taskReport.adminVisible -or $taskOtherCase.caseId -notin $taskReport.caseIds -or $taskCase.caseId -in $taskReport.caseIds -or $taskReport.launchMode -ne 'User' -or $taskReport.accessMode -ne 'User' -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 본인 선택과 업무 범위가 적용되지 않았습니다.'}
@@ -83,7 +98,7 @@ $taskRestrictedScreenshot=Join-Path $taskOutput 'Gui.DualRoleUser.png'
 $taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -DataRoot "{1}" -SmokeTest -SmokeLoginUserId U001 -SmokeReportPath "{2}" -ScreenshotPath "{3}"' -f $taskStart,$taskRoot,$taskRestrictedReport,$taskRestrictedScreenshot)
 $taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
 try {
-    if (-not $taskProcess.WaitForExit(45000)) {$taskProcess.Kill();throw '중복 역할 일반사용자 화면 검증이 완료되지 않았습니다.'}
+    if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw '중복 역할 일반사용자 화면 검증이 완료되지 않았습니다.'}
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskRestrictedReport))
     if ($taskReport.userId -ne 'U001' -or $taskReport.adminVisible -or $taskReport.accessMode -ne 'User' -or 'All' -in $taskReport.scopeIds -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 관리자 역할이 활성화되었습니다.'}

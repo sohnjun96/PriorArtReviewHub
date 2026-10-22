@@ -1,0 +1,48 @@
+<UserControl xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Background="White" FontFamily="Malgun Gothic">
+  <UserControl.Resources>
+    <Style x:Key="Primary" TargetType="Button"><Setter Property="Background" Value="#2257C7"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="#2257C7"/><Setter Property="Padding" Value="15,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style>
+    <Style x:Key="AdminLabel" TargetType="TextBlock"><Setter Property="Foreground" Value="#52647C"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
+    <Style x:Key="AdminSection" TargetType="TextBlock"><Setter Property="FontSize" Value="17"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,14"/><Setter Property="Foreground" Value="#172B4D"/></Style>
+  </UserControl.Resources>
+  <DockPanel Margin="20">
+    <StackPanel DockPanel.Dock="Top">
+      <TextBlock Text="운영 관리" FontSize="22" FontWeight="SemiBold" Foreground="#172B4D"/>
+      <TextBlock Text="관리할 항목과 대상을 선택하면 바로 수정할 수 있습니다." Foreground="#64748B" Margin="0,6,0,14"/>
+      <Border Background="#F4F7FC" CornerRadius="7" Padding="12" Margin="0,0,0,14">
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="135"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <ComboBox x:Name="AdminKindCombo"><ComboBoxItem Content="사용자" Tag="Users"/><ComboBoxItem Content="그룹" Tag="Groups"/><ComboBoxItem Content="조사 방식" Tag="Sources"/><ComboBoxItem Content="월 운영" Tag="Period"/></ComboBox>
+          <Grid Grid.Column="1" Margin="10,0"><ComboBox x:Name="AdminUserCombo" DisplayMemberPath="displayName" SelectedValuePath="userId"/><ComboBox x:Name="AdminGroupCombo" DisplayMemberPath="displayName" SelectedValuePath="groupId" Visibility="Collapsed"/><ComboBox x:Name="AdminSourceCombo" DisplayMemberPath="displayName" SelectedValuePath="sourceId" Visibility="Collapsed"/><ComboBox x:Name="AdminPeriodCombo" DisplayMemberPath="displayName" SelectedValuePath="period" Visibility="Collapsed"/></Grid>
+          <Button x:Name="NewUserButton" Grid.Column="2" Content="신규 사용자" Margin="0"/>
+        </Grid>
+      </Border>
+      <TextBlock x:Name="AdminEditorStateText" Foreground="#2257C7" Margin="0,0,0,12" TextWrapping="Wrap"/>
+    </StackPanel>
+    <Border DockPanel.Dock="Bottom" BorderBrush="#E0E6EF" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,14,0,0">
+      <StackPanel><TextBlock Text="수정·마감 사유" Style="{StaticResource AdminLabel}"/><TextBox x:Name="AdminReasonBox" ToolTip="월 마감과 재개방 시에는 사유를 입력하세요." Margin="0,0,0,10"/>
+        <WrapPanel><Button x:Name="AdminSaveButton" Content="변경사항 저장" Style="{StaticResource Primary}"/><Button x:Name="AdminReloadButton" Content="목록 새로 고침"/><TextBlock x:Name="AdminSavedText" Foreground="#63738A" VerticalAlignment="Center"/></WrapPanel>
+      </StackPanel>
+    </Border>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel>
+        <StackPanel x:Name="UserFieldsPanel">
+          <TextBlock Text="사용자 정보" Style="{StaticResource AdminSection}"/>
+          <TextBlock Text="성명" Style="{StaticResource AdminLabel}"/><TextBox x:Name="UserNameBox" MaxLength="100"/>
+          <Grid Margin="0,15,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,8,0"><TextBlock Text="심사국" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="UserBureauBox" IsEditable="True" IsTextSearchEnabled="True" ToolTip="기존 심사국을 선택하거나 새 심사국을 입력하세요."/></StackPanel><StackPanel Grid.Column="1" Margin="8,0,0,0"><TextBlock Text="심사과" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="UserDivisionBox" IsEditable="True" IsTextSearchEnabled="True" ToolTip="기존 심사과를 선택하거나 새 심사과를 입력하세요."/></StackPanel></Grid>
+          <TextBlock Text="역할 · 여러 개 선택 가능" Style="{StaticResource AdminLabel}" Margin="0,18,0,10"/><WrapPanel><CheckBox x:Name="UserExaminerCheck" Content="심사관" Margin="0,0,22,10"/><CheckBox x:Name="UserAiCheck" Content="AI 담당자" Margin="0,0,22,10"/><CheckBox x:Name="UserAdminCheck" Content="총괄관리자" Margin="0,0,0,10"/></WrapPanel><CheckBox x:Name="UserActiveCheck" Content="활성 사용자" Margin="0,8,0,10"/>
+          <TextBlock Text="심사국·심사과는 선택 사항입니다. 월 운영에서 참여 그룹과 담당 AI를 배정할 수 있습니다." TextWrapping="Wrap" Foreground="#63738A" LineHeight="23"/>
+        </StackPanel>
+        <StackPanel x:Name="GroupFieldsPanel" Visibility="Collapsed"><TextBlock Text="그룹 정보" Style="{StaticResource AdminSection}"/><TextBlock Text="그룹 이름" Style="{StaticResource AdminLabel}"/><TextBox x:Name="GroupNameBox" MaxLength="100"/><CheckBox x:Name="GroupActiveCheck" Content="활성 그룹" Margin="0,18,0,0"/></StackPanel>
+        <StackPanel x:Name="SourceFieldsPanel" Visibility="Collapsed"><TextBlock Text="조사 방식 정보" Style="{StaticResource AdminSection}"/><TextBlock Text="표시 이름" Style="{StaticResource AdminLabel}"/><TextBox x:Name="SourceNameBox" MaxLength="100"/><TextBlock Text="유형" Style="{StaticResource AdminLabel}" Margin="0,15,0,6"/><ComboBox x:Name="SourceTypeCombo" SelectedValuePath="Tag"><ComboBoxItem Content="AI" Tag="AI"/><ComboBoxItem Content="일반 조사" Tag="General"/></ComboBox><CheckBox x:Name="SourceActiveCheck" Content="활성 조사 방식" Margin="0,18,0,0"/></StackPanel>
+        <StackPanel x:Name="PeriodFieldsPanel" Visibility="Collapsed">
+          <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="월별 운영 설정" Style="{StaticResource AdminSection}"/><WrapPanel Grid.Column="1"><Button x:Name="ClosePeriodButton" Content="월 마감"/><Button x:Name="ReopenPeriodButton" Content="재개방" Margin="0"/></WrapPanel></Grid>
+          <TextBlock x:Name="PeriodStateText" Foreground="#63738A" Margin="0,0,0,12"/>
+          <WrapPanel Margin="0,0,0,15"><StackPanel Margin="0,0,12,0"><TextBlock Text="운영 연도" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="PeriodYearCombo" Width="110"/></StackPanel><StackPanel Margin="0,0,12,0"><TextBlock Text="운영 월" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="PeriodMonthCombo" Width="95"/></StackPanel><StackPanel><TextBlock Text="심사관별 제출 상한" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="PeriodLimitCombo" IsEditable="True" Width="140" ToolTip="0은 제한 없음입니다."/></StackPanel></WrapPanel>
+          <TextBlock Text="기한 · 선택한 날짜의 23:59까지, 비워두면 기한 없음" Foreground="#63738A" Margin="0,0,0,8"/>
+          <Grid Margin="0,0,0,16"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,8,0"><TextBlock Text="대상건 제출" Style="{StaticResource AdminLabel}"/><DatePicker x:Name="SubmissionDeadlinePicker"/></StackPanel><StackPanel Grid.Column="1" Margin="0,0,8,0"><TextBlock Text="AI 결과 등록" Style="{StaticResource AdminLabel}"/><DatePicker x:Name="DeliveryDeadlinePicker"/></StackPanel><StackPanel Grid.Column="2"><TextBlock Text="결과 평가" Style="{StaticResource AdminLabel}"/><DatePicker x:Name="EvaluationDeadlinePicker"/></StackPanel></Grid>
+          <TextBlock Text="비교 조사 방식 · 사용할 항목을 클릭하여 선택" Style="{StaticResource AdminLabel}"/><ListBox x:Name="PeriodSourcesList" SelectionMode="Multiple" DisplayMemberPath="displayName" MaxHeight="110" Margin="0,0,0,16"/>
+          <TabControl BorderBrush="#E0E6EF"><TabItem Header="참여 심사관"><StackPanel Margin="12"><TextBlock Text="심사관과 소속 그룹을 드롭다운에서 선택하세요." Foreground="#63738A" Margin="0,0,0,10"/><DataGrid x:Name="PeriodMembersGrid" Height="205"/><WrapPanel Margin="0,10,0,0"><Button x:Name="AddPeriodMemberButton" Content="참여자 추가"/><Button x:Name="RemovePeriodMemberButton" Content="선택 참여자 삭제"/></WrapPanel></StackPanel></TabItem><TabItem Header="AI 담당 배정"><StackPanel Margin="12"><TextBlock Text="그룹과 AI별 담당자를 선택하세요. 같은 그룹의 AI 하나에는 담당자 한 명을 배정합니다." Foreground="#63738A" TextWrapping="Wrap" Margin="0,0,0,10"/><DataGrid x:Name="PeriodAssignmentsGrid" Height="205"/><WrapPanel Margin="0,10,0,0"><Button x:Name="AddPeriodAssignmentButton" Content="담당 배정 추가"/><Button x:Name="RemovePeriodAssignmentButton" Content="선택 배정 삭제"/></WrapPanel></StackPanel></TabItem></TabControl>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</UserControl>

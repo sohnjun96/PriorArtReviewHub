@@ -127,25 +127,50 @@ try {
     $operationMonth = Get-Date -Format 'yyyy-MM'
     $realCase = New-Submission -Context $examinerContext -Period $operationMonth -ApplicationNumber ('10-' + (Get-Date -Format 'yyyy') + '-0000001') -Cpc 'G06F 16/00' -RequestId ([guid]::NewGuid().ToString('N'))
     $realAttachment = Import-DeliveryAttachment -Context $operatorContext -Case $realCase -SourceId 'S03' -Path $attachmentPath
-    $realDelivery = Save-Delivery -Context $operatorContext -Case $realCase -SourceId 'S03' -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -Status Published -Documents @([pscustomobject]@{
-        documentId = 'D001'; type = 'Patent'; identifier = '001122'; title = '=실제 납품'; description = '실제 모듈 연동'; attachments = @($realAttachment)
-    })
-    $null = Save-Evaluation -Context $examinerContext -Case $realCase -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -DeliveryVersions @{ S01 = 0; S02 = 0; S03 = $realDelivery.version } -DocumentRatings @([pscustomobject]@{ sourceId = 'S03'; documentId = 'D001'; score = 0; cited = $false; note = '=비고' })
+    $realDelivery = Save-Delivery -Context $operatorContext -Case $realCase -SourceId 'S03' -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -Status Published -Documents @(
+        [pscustomobject]@{ documentId = 'D001'; type = 'Patent'; identifier = '001122'; title = '=실제 납품'; description = '실제 모듈 연동'; attachments = @($realAttachment) },
+        [pscustomobject]@{ documentId = 'D002'; identifier = '10-2020-0011223' },
+        [pscustomobject]@{ documentId = 'D003'; identifier = '10-2021-0044556'; title = '' }
+    )
+    Assert-ExportTest ($realDelivery.data.documents[1].title -eq '' -and $realDelivery.data.documents[2].title -eq '') 'Identifier-only documents publish when title is omitted or empty.'
+    $null = Save-Evaluation -Context $examinerContext -Case $realCase -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -DeliveryVersions @{ S01 = 0; S02 = 0; S03 = $realDelivery.version } -DocumentRatings @(
+        [pscustomobject]@{ sourceId = 'S03'; documentId = 'D001'; score = 0; cited = $false; note = '=비고' },
+        [pscustomobject]@{ sourceId = 'S03'; documentId = 'D002'; score = 5; cited = $true; note = '번호로만 등록한 문헌' }
+    )
     $examinerMaster = @(Get-Users -Context $adminContext | Where-Object { $_.userId -eq 'U002' })[0]
     $examinerMaster.bureau = '변경한 심사국'
     $examinerMaster.division = '변경한 심사과'
     $null = Save-MasterRecord -Context $adminContext -Type Users -Id 'U002' -Data $examinerMaster -ExpectedVersion $examinerMaster.version -RequestId ([guid]::NewGuid().ToString('N'))
     $examinerContext = Get-Context -Root $storeRoot -UserId 'U002'
     $realOwnedExport = Export-ReviewSnapshot -Context $examinerContext -Period $operationMonth -Scope Mine -OutputDirectory $tempRoot -CaseId $realCase.caseId -IncludeAttachments
-    Assert-ExportTest ($realOwnedExport.documentCount -eq 1 -and [IO.File]::Exists($realOwnedExport.bundlePath)) 'Real workflow owned-case XLSX/attachment ZIP export succeeds.'
+    Assert-ExportTest ($realOwnedExport.documentCount -eq 3 -and [IO.File]::Exists($realOwnedExport.bundlePath)) 'Real workflow exports legacy titled and identifier-only documents with their attachment ZIP.'
     $zip = Open-ExportTestZip $realOwnedExport.workbookPath
     try {
         Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('평가 중')) 'A partial evaluation is labelled as in progress.'
         Assert-ExportCaseFields -Archive $zip -Bureau '기계금속심사국' -Division '로봇자동화심사과' -Cpc 'G06F 16/00'
+        [xml]$realDocumentSheet = Read-ExportZipEntry $zip 'xl/worksheets/sheet2.xml'
+        Assert-ExportTest ($realDocumentSheet.DocumentElement.InnerText.Contains('=실제 납품')) 'Historical document titles remain available in the document list.'
+        [xml]$realRatingSheet = Read-ExportZipEntry $zip 'xl/worksheets/sheet4.xml'
+        $realRatingRows = @($realRatingSheet.GetElementsByTagName('row'))
+        $ratingHeaders = @($realRatingRows[0].GetElementsByTagName('c') | ForEach-Object { $_.InnerText })
+        $coreRatingHeaders = @('조사 방식', '문헌', '점수(0~5점)', '인용여부(O/X)', '비고')
+        Assert-ExportTest (@($ratingHeaders | Where-Object { $coreRatingHeaders -contains $_ }).Count -eq 5 -and $ratingHeaders -notcontains '명칭') 'Rating export has the five requested evaluation columns and no title column.'
+        $exportedRatings = @{}
+        foreach ($row in @($realRatingRows | Select-Object -Skip 1)) {
+            $values = @($row.GetElementsByTagName('c'))
+            $ratingRow = @{}
+            for ($columnIndex = 0; $columnIndex -lt $ratingHeaders.Count; $columnIndex++) { $ratingRow[$ratingHeaders[$columnIndex]] = $values[$columnIndex] }
+            $exportedRatings[$ratingRow['문헌'].InnerText] = $ratingRow
+        }
+        Assert-ExportTest ($exportedRatings.ContainsKey('10-2020-0011223') -and $exportedRatings.ContainsKey('10-2021-0044556')) 'The document column shows the supplied numbers even without document titles.'
+        Assert-ExportTest ($exportedRatings['10-2020-0011223']['점수(0~5점)'].InnerText -eq '5' -and $exportedRatings['10-2020-0011223']['인용여부(O/X)'].InnerText -eq 'O') 'Identifier-only document ratings retain the actual score and citation.'
+        Assert-ExportTest ($exportedRatings['001122']['점수(0~5점)'].InnerText -eq '0' -and $exportedRatings['001122']['인용여부(O/X)'].InnerText -eq 'X') 'A zero score and false citation remain distinct from missing ratings.'
+        Assert-ExportTest ($exportedRatings['10-2021-0044556']['점수(0~5점)'].InnerText -eq '' -and $exportedRatings['10-2021-0044556']['인용여부(O/X)'].InnerText -eq '') 'An unreviewed identifier-only document has blank score and citation.'
+        Assert-ExportTest ($exportedRatings['001122']['비고'].GetAttribute('t') -eq 'inlineStr' -and $exportedRatings['001122']['비고'].InnerText -eq '=비고' -and $realRatingSheet.GetElementsByTagName('f').Count -eq 0) 'Formula-like rating notes remain literal text.'
     }
     finally { $zip.Dispose() }
     $realAssignedExport = Export-ReviewSnapshot -Context $operatorContext -Period $operationMonth -Scope Assigned -OutputDirectory $tempRoot -CaseId $realCase.caseId -IncludeAttachments
-    Assert-ExportTest ($realAssignedExport.caseCount -eq 1 -and $realAssignedExport.documentCount -eq 1) 'Real assigned AI export succeeds without reading examiner evaluation.'
+    Assert-ExportTest ($realAssignedExport.caseCount -eq 1 -and $realAssignedExport.documentCount -eq 3) 'Real assigned AI export succeeds without reading examiner evaluation.'
     $zip = Open-ExportTestZip $realAssignedExport.workbookPath
     try { Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('조회 권한 없음')) 'Real assigned export omits examiner evaluation.' }
     finally { $zip.Dispose() }
@@ -171,7 +196,7 @@ try {
         param($Context, $Case)
         [pscustomobject]@{ version = 2; data = [pscustomobject]@{ sourceId = 'S02'; sourceName = 'ChatGPT'; noResults = $false; documents = @(
             [pscustomobject]@{ documentId = 'D1'; type = '특허'; identifier = '001122'; title = '=문헌'; description = '설명'; attachments = @([pscustomobject]@{ attachmentId = 'A1'; fileName = '문헌.txt'; relativePath = 'Data/a.txt' }) },
-            [pscustomobject]@{ documentId = 'D2'; type = '논문'; identifier = 'doi:sample'; title = '미평가'; description = ''; attachments = @() }
+            [pscustomobject]@{ documentId = 'D2'; identifier = 'doi:sample'; attachments = @() }
         ) } }
         [pscustomobject]@{ version = 1; data = [pscustomobject]@{ sourceId = 'S01'; sourceName = '선행기술조사'; noResults = $true; noResultsReason = '관련 문헌 없음'; documents = @() } }
     }

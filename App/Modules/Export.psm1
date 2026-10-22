@@ -382,8 +382,8 @@ function Export-ReviewSnapshot {
                 }
                 $documentRows.Add([pscustomobject][ordered]@{
                     period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
-                    sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; documentId = $documentId; type = $document.type
-                    identifier = [string]$document.identifier; title = $document.title; description = $document.description; attachments = ($attachmentNames -join "`n")
+                    sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; documentId = $documentId; type = Get-ExportProperty $document 'type' ''
+                    identifier = [string]$document.identifier; title = Get-ExportProperty $document 'title' ''; description = Get-ExportProperty $document 'description' ''; attachments = ($attachmentNames -join "`n")
                 })
                 $ratingKey = $sourceId + ':' + $documentId
                 $rating = @($ratings | Where-Object { [string](Get-ExportProperty $_ 'sourceId') -eq $sourceId -and [string](Get-ExportProperty $_ 'documentId') -eq $documentId } | Select-Object -First 1)
@@ -393,7 +393,7 @@ function Export-ReviewSnapshot {
                 $ratingRows.Add([pscustomobject][ordered]@{
                     period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                     sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; evaluatedVersion = $evaluatedVersion; documentId = $documentId
-                    identifier = [string]$document.identifier; title = $document.title; score = Get-ExportProperty $ratingData 'score'
+                    identifier = [string]$document.identifier; score = Get-ExportProperty $ratingData 'score'
                     cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' }); note = Get-ExportProperty $ratingData 'note'
                     needsReconfirmation = $(if ($sourceStale) { '필요' } else { '' })
                 })
@@ -408,7 +408,7 @@ function Export-ReviewSnapshot {
             $ratingRows.Add([pscustomobject][ordered]@{
                 period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                 sourceId = $sourceId; sourceName = $sourceId; deliveryVersion = $null; evaluatedVersion = Get-ExportProperty $evaluatedVersions $sourceId; documentId = $documentId
-                identifier = ''; title = '현재 납품에 없는 문헌'; score = Get-ExportProperty $rating 'score'; cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' })
+                identifier = '현재 납품에 없는 문헌'; score = Get-ExportProperty $rating 'score'; cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' })
                 note = Get-ExportProperty $rating 'note'; needsReconfirmation = '필요'
             })
         }
@@ -421,7 +421,7 @@ function Export-ReviewSnapshot {
     $rankingColumns = [ordered]@{}; foreach ($key in $common.Keys) { $rankingColumns[$key] = $common[$key] }
     $rankingColumns['sourceId'] = '조사 방식 ID'; $rankingColumns['sourceName'] = '조사 방식'; $rankingColumns['deliveryVersion'] = '현재 납품 버전'; $rankingColumns['evaluatedVersion'] = '평가한 납품 버전'; $rankingColumns['rank'] = '품질 순위'; $rankingColumns['status'] = '순위 상태'; $rankingColumns['needsReconfirmation'] = '재확인'
     $ratingColumns = [ordered]@{}; foreach ($key in $common.Keys) { $ratingColumns[$key] = $common[$key] }
-    $ratingColumns['sourceId'] = '조사 방식 ID'; $ratingColumns['sourceName'] = '조사 방식'; $ratingColumns['deliveryVersion'] = '현재 납품 버전'; $ratingColumns['evaluatedVersion'] = '평가한 납품 버전'; $ratingColumns['documentId'] = '문헌 ID'; $ratingColumns['identifier'] = '문헌 식별정보'; $ratingColumns['title'] = '명칭'; $ratingColumns['score'] = '점수'; $ratingColumns['cited'] = '인용 여부'; $ratingColumns['note'] = '비고'; $ratingColumns['needsReconfirmation'] = '재확인'
+    $ratingColumns['sourceId'] = '조사 방식 ID'; $ratingColumns['sourceName'] = '조사 방식'; $ratingColumns['deliveryVersion'] = '현재 납품 버전'; $ratingColumns['evaluatedVersion'] = '평가한 납품 버전'; $ratingColumns['documentId'] = '문헌 ID'; $ratingColumns['identifier'] = '문헌'; $ratingColumns['score'] = '점수(0~5점)'; $ratingColumns['cited'] = '인용여부(O/X)'; $ratingColumns['note'] = '비고'; $ratingColumns['needsReconfirmation'] = '재확인'
     $sheets = [ordered]@{ '출원별 현황' = $caseRows.ToArray(); '선행기술 목록' = $documentRows.ToArray(); '품질 순위' = $rankingRows.ToArray(); '문헌별 평가' = $ratingRows.ToArray() }
     $columns = @{ '출원별 현황' = $caseColumns; '선행기술 목록' = $documentColumns; '품질 순위' = $rankingColumns; '문헌별 평가' = $ratingColumns }
     $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)

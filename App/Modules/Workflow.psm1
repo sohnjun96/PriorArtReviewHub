@@ -69,10 +69,6 @@ function Convert-WOptionalText {
     return $text
 }
 
-function Get-WCurrentSid {
-    return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-}
-
 function Assert-WId {
     param([string]$Value, [string]$Label = 'ID')
     if ($Value -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,100}$') { throw "$Label 값이 올바르지 않습니다." }
@@ -147,11 +143,8 @@ function Assert-WContext {
     Assert-WId $userId '사용자 ID'
     $record = Read-Revision -Path (Get-WMasterPath $root 'Users' $userId)
     if ($null -eq $record -or -not [bool](Get-WValue $record.data 'active' $true)) { throw '활성 사용자 등록을 확인할 수 없습니다.' }
-    $isDemo = [System.IO.File]::Exists((Join-Path $root '.demo-mode.json'))
-    $impersonated = [bool](Get-WValue $Context 'demoImpersonation' $false)
-    if (-not ($isDemo -and $impersonated) -and [string](Get-WValue $record.data 'sid') -ne (Get-WCurrentSid)) {
-        throw '현재 Windows 계정과 등록된 사용자가 일치하지 않습니다.'
-    }
+    # This shared-folder tool deliberately uses a user selector for sign-in.
+    # Refresh activity and roles on every operation without tying users to PCs.
     return $record.data
 }
 
@@ -211,18 +204,51 @@ function Get-Periods {
     }
 }
 
+function Get-LoginUsers {
+    param([Parameter(Mandatory)][string]$Root)
+    $resolved = [System.IO.Path]::GetFullPath($Root)
+    $entries = @(
+        foreach ($record in @(Get-WMasterRecords $resolved 'Users')) {
+            if (-not [bool](Get-WValue $record 'active' $true)) { continue }
+            $division = [string](Get-WValue $record 'division' '')
+            if ([string]::IsNullOrWhiteSpace($division)) { $division = '미지정' }
+            [pscustomobject]@{ userId = $record.userId; name = $record.name; bureau = [string](Get-WValue $record 'bureau' '');
+                division = $division; displayName = ($division + ' - ' + $record.name); roles = @((Get-WValue $record 'roles' @())); active = $true }
+        }
+    )
+    foreach ($duplicates in @($entries | Group-Object displayName | Where-Object { $_.Count -gt 1 })) {
+        foreach ($entry in @($duplicates.Group)) {
+            $suffix = $entry.bureau
+            $sameBureau = @($duplicates.Group | Where-Object { $_.bureau -eq $entry.bureau })
+            if (-not $suffix -or $sameBureau.Count -gt 1) {
+                # Use a unique ID suffix, extending it for unusual imported IDs.
+                $length = [Math]::Min(8, $entry.userId.Length)
+                do {
+                    $shortId = $entry.userId.Substring($entry.userId.Length - $length)
+                    $collisions = @($sameBureau | Where-Object { $_.userId.EndsWith($shortId, [StringComparison]::OrdinalIgnoreCase) })
+                    if ($collisions.Count -le 1 -or $length -ge $entry.userId.Length) { break }
+                    $length++
+                } while ($true)
+                if ($suffix) { $suffix += ' / ' }
+                $suffix += $shortId
+            }
+            $entry.displayName += ' (' + $suffix + ')'
+        }
+    }
+    $entries | Sort-Object division, name, userId
+}
+
 function Get-Context {
     param([Parameter(Mandatory)][string]$Root, [string]$UserId)
     $resolved = [System.IO.Path]::GetFullPath($Root)
     $demo = [System.IO.File]::Exists((Join-Path $resolved '.demo-mode.json'))
-    if ($UserId -and -not $demo) { throw '사용자 전환은 데모 데이터에서만 허용됩니다.' }
-    $users = @(Get-WMasterRecords $resolved 'Users')
+    $users = @(Get-WMasterRecords $resolved 'Users' | Where-Object { [bool](Get-WValue $_ 'active' $true) })
     if ($UserId) { $matches = @($users | Where-Object { $_.userId -eq $UserId -and (Get-WValue $_ 'active' $true) }) }
     else {
-        $sid = Get-WCurrentSid
-        $matches = @($users | Where-Object { (Get-WValue $_ 'sid') -eq $sid -and (Get-WValue $_ 'active' $true) })
+        # Script/backwards-compatible default. The GUI always shows the selector.
+        $matches = @($users | Sort-Object @{Expression={ if (Test-WRole $_ 'admin') { 0 } else { 1 } }}, userId | Select-Object -First 1)
     }
-    if ($matches.Count -ne 1) { throw '현재 Windows 계정에 연결된 활성 사용자가 하나 있어야 합니다. 관리자에게 사용자 등록을 요청하십시오.' }
+    if ($matches.Count -ne 1) { throw '선택한 활성 사용자를 찾을 수 없습니다. 관리자에게 사용자 등록을 요청하십시오.' }
     $context = [pscustomobject]@{ root = $resolved; user = $matches[0]; demoMode = $demo; demoImpersonation = [bool]$UserId; periods = @() }
     $context.periods = @(Get-Periods -Context $context)
     return $context
@@ -529,18 +555,18 @@ function Convert-WDocuments {
         else { Assert-WId $id '문헌 ID' }
         if ($ids.ContainsKey($id)) { throw '문헌 ID가 중복되었습니다.' }
         $ids[$id] = $true
-        $type = [string](Get-WValue $item 'type' (Get-WValue $item 'documentType' 'Patent'))
-        if ($type -notin @('Patent','Paper','Other','특허','논문','기타')) { throw '문헌 유형은 Patent, Paper, Other 또는 특허, 논문, 기타여야 합니다.' }
+        $oldDocument = @((Get-WValue (Get-WValue $Existing 'data') 'documents' @()) | Where-Object { $_.documentId -eq $id }) | Select-Object -First 1
+        $type = [string](Get-WValue $item 'type' (Get-WValue $item 'documentType' (Get-WValue $oldDocument 'type' 'Patent')))
         $identifier = [string](Get-WValue $item 'identifier' '')
-        $title = [string](Get-WValue $item 'title' '')
-        if ([string]::IsNullOrWhiteSpace($identifier) -or [string]::IsNullOrWhiteSpace($title)) { throw '문헌 식별정보와 명칭을 입력하십시오.' }
+        $title = [string](Get-WValue $item 'title' (Get-WValue $oldDocument 'title' ''))
+        if ([string]::IsNullOrWhiteSpace($identifier)) { throw '문헌 출원번호 또는 식별정보를 입력하십시오.' }
         $attachments = @()
         foreach ($attachment in @((Get-WValue $item 'attachments' @()))) {
             $null = Resolve-DeliveryAttachment $Context $Case $SourceId $attachment
             $attachments += [pscustomobject]@{ attachmentId = [string](Get-WValue $attachment 'attachmentId'); fileName = [string](Get-WValue $attachment 'fileName');
                 relativePath = [string](Get-WValue $attachment 'relativePath'); size = [long](Get-WValue $attachment 'size' 0); sha256 = [string](Get-WValue $attachment 'sha256') }
         }
-        [pscustomobject]@{ documentId = $id; type = $type; identifier = $identifier.Trim(); title = $title.Trim(); description = [string](Get-WValue $item 'description' ''); attachments = @($attachments) }
+        [pscustomobject]@{ documentId = $id; type = $type; identifier = $identifier.Trim(); title = $title.Trim(); description = [string](Get-WValue $item 'description' (Get-WValue $oldDocument 'description' '')); attachments = @($attachments) }
     }
 }
 
@@ -808,12 +834,47 @@ function Set-PeriodStatus {
     }
 }
 
+function New-User {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name,
+        [string]$Bureau = '', [string]$Division = '', [string[]]$Roles = @('examiner'),
+        [Parameter(Mandatory)][string]$RequestId, [string]$Reason = '', [bool]$Active = $true)
+    $user = Assert-WAdmin $Context
+    Assert-WId $RequestId '저장 요청 ID'
+    $nameText = Convert-WOptionalText $Name '이름'
+    if (-not $nameText) { throw '이름을 입력하십시오.' }
+    $bureauText = Convert-WOptionalText $Bureau '심사국'
+    $divisionText = Convert-WOptionalText $Division '심사과'
+    $roleValues = @($Roles | Sort-Object -Unique)
+    foreach ($role in $roleValues) { if ($role -notin @('admin','examiner','ai')) { throw '사용자 역할이 올바르지 않습니다.' } }
+    $fingerprint = Get-WFingerprint @{operation='NewUser';name=$nameText;bureau=$bureauText;division=$divisionText;roles=@($roleValues);active=$Active;reason=$Reason}
+    return Invoke-FileLock -Path (Join-Path $Context.root 'Locks\master-users-registration.lock') -Action {
+        $user = Assert-WAdmin $Context
+        foreach ($existing in @(Get-WMasterRecords $Context.root 'Users')) {
+            foreach ($revision in @(Get-Revisions -Path $existing.path)) {
+                if ($revision.requestId -ceq $RequestId) {
+                    Assert-WRequest $revision $fingerprint $user.userId
+                    return Convert-WRecord $revision $existing.path
+                }
+            }
+        }
+        do {
+            $userId = 'U' + [guid]::NewGuid().ToString('N')
+            $path = Get-WMasterPath $Context.root 'Users' $userId
+        } while ([System.IO.Directory]::Exists($path))
+        $data = [pscustomobject]@{userId=$userId;sid=('APP-' + [guid]::NewGuid().ToString('N'));name=$nameText;bureau=$bureauText;
+            division=$divisionText;roles=@($roleValues);active=$Active;requestFingerprint=$fingerprint}
+        $saved = Write-Revision -Path $path -ExpectedVersion 0 -RequestId $RequestId -ActorId $user.userId -Reason $Reason -Data $data -Kind Users -TargetId $userId
+        return Convert-WRecord $saved $path
+    }
+}
+
 function Save-MasterRecord {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][Alias('Kind')][ValidateSet('Users','Groups','Sources')][string]$Type,
         [Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)]$Data, [Parameter(Mandatory)][int]$ExpectedVersion,
         [Parameter(Mandatory)][string]$RequestId, [string]$Reason = '')
     $user = Assert-WAdmin $Context
     Assert-WId $Id
+    Assert-WId $RequestId '저장 요청 ID'
     $clean = ConvertFrom-WJson (ConvertTo-Json -InputObject $Data -Depth 60)
     $clean = $clean | Select-Object * -ExcludeProperty version,path,requestFingerprint
     $idField = @{ Users = 'userId'; Groups = 'groupId'; Sources = 'sourceId' }[$Type]
@@ -829,20 +890,30 @@ function Save-MasterRecord {
         }
         $roles = @((Get-WValue $clean 'roles' @()))
         foreach ($role in $roles) { if ($role -notin @('admin','examiner','ai')) { throw '사용자 역할이 올바르지 않습니다.' } }
-        if (-not (Get-WValue $Context 'demoMode' $false) -and [string](Get-WValue $clean 'sid') -notmatch '^S-1-\d+(?:-\d+)+$') { throw 'Windows SID를 입력하십시오.' }
-        if ([bool](Get-WValue $clean 'active' $true)) {
-            foreach ($other in @(Get-WMasterRecords $Context.root 'Users')) {
-                if ($other.userId -ne $Id -and [bool](Get-WValue $other 'active' $true) -and (Get-WValue $other 'sid') -eq (Get-WValue $clean 'sid')) { throw '같은 SID를 다른 활성 사용자에 중복 배정할 수 없습니다.' }
-            }
-        }
         if ($Id -eq $user.userId -and (-not [bool](Get-WValue $clean 'active' $true) -or $roles -notcontains 'admin')) { throw '현재 관리자는 본인의 관리자 권한을 해제하거나 비활성화할 수 없습니다.' }
     }
     if ($Type -eq 'Sources' -and [string](Get-WValue $clean 'type') -notin @('General','AI')) { throw '조사 방식 유형은 General 또는 AI여야 합니다.' }
-    Set-WValue $clean 'requestFingerprint' (Get-WFingerprint @{operation='SaveMasterRecord';type=$Type;id=$Id;data=$clean;expectedVersion=$ExpectedVersion;reason=$Reason})
+    # SID is managed metadata. Excluding it makes retries of missing-SID creates
+    # deterministic and ensures an edit cannot change an existing legacy SID.
+    $intentData = $clean
+    if ($Type -eq 'Users') { $intentData = $clean | Select-Object * -ExcludeProperty sid }
+    $fingerprint = Get-WFingerprint @{operation='SaveMasterRecord';type=$Type;id=$Id;data=$intentData;expectedVersion=$ExpectedVersion;reason=$Reason}
+    Set-WValue $clean 'requestFingerprint' $fingerprint
     $path = Get-WMasterPath $Context.root $Type $Id
-    $user = Assert-WAdmin $Context
-    $saved = Write-Revision -Path $path -ExpectedVersion $ExpectedVersion -RequestId $RequestId -ActorId $user.userId -Reason $Reason -Data $clean -Kind $Type -TargetId $Id
-    return Convert-WRecord $saved $path
+    $saveAction = {
+        $user = Assert-WAdmin $Context
+        $oldRequest = @(Get-Revisions -Path $path | Where-Object { $_.requestId -ceq $RequestId }) | Select-Object -First 1
+        if ($oldRequest) { Assert-WRequest $oldRequest $fingerprint $user.userId; return Convert-WRecord $oldRequest $path }
+        if ($Type -eq 'Users') {
+            $previous = Read-Revision -Path $path
+            if ($previous) { Set-WValue $clean 'sid' ([string](Get-WValue $previous.data 'sid' '')) }
+            elseif ([string]::IsNullOrWhiteSpace([string](Get-WValue $clean 'sid' ''))) { Set-WValue $clean 'sid' ('APP-' + [guid]::NewGuid().ToString('N')) }
+        }
+        $saved = Write-Revision -Path $path -ExpectedVersion $ExpectedVersion -RequestId $RequestId -ActorId $user.userId -Reason $Reason -Data $clean -Kind $Type -TargetId $Id
+        return Convert-WRecord $saved $path
+    }
+    if ($Type -eq 'Users') { return Invoke-FileLock -Path (Join-Path $Context.root 'Locks\master-users-registration.lock') -Action $saveAction }
+    return & $saveAction
 }
 
 function Save-Period {
@@ -909,11 +980,10 @@ function Initialize-Demo {
     if (-not [System.IO.File]::Exists($marker)) {
         [System.IO.File]::WriteAllText($marker, '{"demo":true}', (New-Object System.Text.UTF8Encoding($false)))
     }
-    $sid = Get-WCurrentSid
     $records = @(
-        @{ type='Users'; id='U001'; data=@{userId='U001';sid=$sid;name='데모 관리자';bureau='';division='';roles=@('admin','examiner','ai');active=$true} },
-        @{ type='Users'; id='U002'; data=@{userId='U002';sid='DEMO-U002';name='데모 심사관';bureau='';division='';roles=@('examiner');active=$true} },
-        @{ type='Users'; id='U003'; data=@{userId='U003';sid='DEMO-U003';name='데모 클로드 담당자';bureau='';division='';roles=@('examiner','ai');active=$true} },
+        @{ type='Users'; id='U001'; data=@{userId='U001';sid=('APP-'+[guid]::NewGuid().ToString('N'));name='데모 관리자';bureau='';division='';roles=@('admin','examiner','ai');active=$true} },
+        @{ type='Users'; id='U002'; data=@{userId='U002';sid=('APP-'+[guid]::NewGuid().ToString('N'));name='데모 심사관';bureau='';division='';roles=@('examiner');active=$true} },
+        @{ type='Users'; id='U003'; data=@{userId='U003';sid=('APP-'+[guid]::NewGuid().ToString('N'));name='데모 클로드 담당자';bureau='';division='';roles=@('examiner','ai');active=$true} },
         @{ type='Groups'; id='G01'; data=@{groupId='G01';name='시범 그룹';active=$true} },
         @{ type='Sources'; id='S01'; data=@{sourceId='S01';name='선행기술조사';type='General';active=$true} },
         @{ type='Sources'; id='S02'; data=@{sourceId='S02';name='ChatGPT';type='AI';active=$true} },
@@ -936,4 +1006,4 @@ function Initialize-Demo {
     return Get-Context -Root $rootPath
 }
 
-Export-ModuleMember -Function Initialize-Demo,Get-Context,Get-Periods,Get-Users,Get-Groups,Get-Sources,Get-Period,Get-Cases,New-Submission,Cancel-Submission,Get-Deliveries,Get-DeliveryForEdit,Get-DeliveryHistory,Save-Delivery,Import-DeliveryAttachment,Resolve-DeliveryAttachment,Get-Evaluation,Save-Evaluation,Get-CaseStatus,Set-PeriodStatus,Save-MasterRecord,Save-Period
+Export-ModuleMember -Function Initialize-Demo,Get-Context,Get-LoginUsers,New-User,Get-Periods,Get-Users,Get-Groups,Get-Sources,Get-Period,Get-Cases,New-Submission,Cancel-Submission,Get-Deliveries,Get-DeliveryForEdit,Get-DeliveryHistory,Save-Delivery,Import-DeliveryAttachment,Resolve-DeliveryAttachment,Get-Evaluation,Save-Evaluation,Get-CaseStatus,Set-PeriodStatus,Save-MasterRecord,Save-Period

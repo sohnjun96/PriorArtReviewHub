@@ -31,6 +31,15 @@ try {
             throw "Grid '$gridName' permits uncontrolled row/column creation."
         }
     }
+    $headers=@($window.FindName('MainTabs').Items | ForEach-Object {$_.Header})
+    if (($headers -join '|') -cne '대상건 선정|AI 검색 결과 입력|AI 검색 결과 평가|운영 관리') {throw 'The requested consolidated menus are missing.'}
+    $ratingHeaders=@($window.FindName('RatingsGrid').Columns | ForEach-Object {$_.Header})
+    if (($ratingHeaders -join '|') -cne '조사 방식|문헌|점수(0~5점)|인용여부(O/X)|비고') {throw 'Evaluation grid must contain exactly the requested five columns.'}
+    if ($null -ne $window.FindName('UserSidBox')) {throw 'User registration must not request a Windows SID.'}
+    $loginReader=[Xml.XmlReader]::Create((Join-Path $appPath 'Views/Login.xaml'))
+    try {$loginWindow=[Windows.Markup.XamlReader]::Load($loginReader)} finally {$loginReader.Close()}
+    foreach ($controlName in @('LoginUsersList','LoginSearchBox','LoginButton','LoginRefreshButton','LoginStatusText')) {if (-not $loginWindow.FindName($controlName)) {throw "Login control is missing: $controlName"}}
+    $loginWindow.Close()
     Write-Host ('GUI structure passed: {0} referenced controls, {1} event bindings, valid WPF XAML (PowerShell {2}).' -f $controlReferences.Count, $eventReferences.Count, $PSVersionTable.PSVersion)
 }
 finally { $window.Close() }

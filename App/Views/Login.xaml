@@ -1,0 +1,11 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="사용자 선택 · AI 선행기술조사" Width="620" Height="700" MinWidth="500" MinHeight="560" WindowStartupLocation="CenterScreen" Background="#F4F6FA" FontFamily="Malgun Gothic" FontSize="14">
+  <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+    <Border Background="#152744" Padding="28,24"><StackPanel><TextBlock Text="AI 선행기술조사 · 평가 관리" Foreground="White" FontSize="24" FontWeight="SemiBold"/><TextBlock Text="심사과 - 이름 목록에서 본인을 선택하세요." Foreground="#B8C9E6" Margin="0,10,0,0"/></StackPanel></Border>
+    <Grid Grid.Row="1" Margin="28"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <TextBlock Text="심사과·이름 검색" Foreground="#63738A" Margin="0,0,0,8"/><TextBox x:Name="LoginSearchBox" Grid.Row="1" Padding="10,8" BorderBrush="#CCD5E2" Margin="0,0,0,15"/>
+      <ListBox x:Name="LoginUsersList" Grid.Row="2" DisplayMemberPath="displayName" BorderBrush="#CCD5E2" ScrollViewer.HorizontalScrollBarVisibility="Disabled"><ListBox.ItemContainerStyle><Style TargetType="ListBoxItem"><Setter Property="Padding" Value="12,12"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/></Style></ListBox.ItemContainerStyle></ListBox>
+      <TextBlock x:Name="LoginStatusText" Grid.Row="3" Foreground="#63738A" Margin="0,12,0,14" TextWrapping="Wrap"/>
+      <Grid Grid.Row="4"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><Button x:Name="LoginRefreshButton" Content="목록 새로 고침" Padding="14,9" HorizontalAlignment="Left" Background="White" BorderBrush="#CCD5E2"/><Button x:Name="LoginButton" Grid.Column="1" Content="선택한 사용자로 로그인" Padding="20,10" Background="#2257C7" BorderBrush="#2257C7" Foreground="White" IsDefault="True"/></Grid>
+    </Grid>
+  </Grid>
+</Window>

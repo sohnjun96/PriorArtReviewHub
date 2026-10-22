@@ -67,6 +67,52 @@ try {
         Assert-True ($null -eq (Read-Revision -Path $path).data.PSObject.Properties['bureau']) 'blank read projection is not persisted'
     }
 
+    Test-Case 'new users receive automatic identifiers and retries preserve the first registration' {
+        $request=New-Request
+        $created=New-User -Context $admin -Name ' 신규 심사관 ' -Bureau ' 특허심사국 ' -Division ' 정보처리심사과 ' -Roles @('examiner','ai') -RequestId $request -Reason '참여자 등록'
+        Assert-True ($created.userId -match '^U[0-9a-f]{32}$' -and $created.sid -match '^APP-[0-9a-f]{32}$') 'internal user ID and SID are generated'
+        Assert-True ($created.name -eq '신규 심사관' -and $created.bureau -eq '특허심사국' -and $created.division -eq '정보처리심사과') 'registration trims profile text'
+        $again=New-User -Context $admin -Name '신규 심사관' -Bureau '특허심사국' -Division '정보처리심사과' -Roles @('ai','examiner') -RequestId $request -Reason '참여자 등록'
+        Assert-True ($again.userId -eq $created.userId -and $again.sid -eq $created.sid -and $again.version -eq 1) 'same intent registers only once'
+        Assert-Throws {New-User -Context $admin -Name '다른 심사관' -Bureau '특허심사국' -Division '정보처리심사과' -Roles @('examiner','ai') -RequestId $request -Reason '참여자 등록'} '요청 ID'
+        Assert-Throws {New-User -Context $admin -Name '신규 심사관' -Bureau '특허심사국' -Division '정보처리심사과' -Roles @('examiner','ai') -RequestId $request -Reason '다른 사유'} '요청 ID'
+        Assert-Throws {New-User -Context $examiner -Name '권한 없음' -RequestId (New-Request)} '관리자'
+    }
+
+    Test-Case 'master registration supplies a missing SID and preserves legacy identifiers on update' {
+        $request=New-Request
+        $profile=[pscustomobject]@{userId='UAutoSid';name='자동 식별자';bureau='';division='';roles=@('examiner');active=$true}
+        $created=Save-MasterRecord -Context $admin -Type Users -Id UAutoSid -Data $profile -ExpectedVersion 0 -RequestId $request
+        $again=Save-MasterRecord -Context $admin -Type Users -Id UAutoSid -Data $profile -ExpectedVersion 0 -RequestId $request
+        Assert-True ($created.sid -match '^APP-[0-9a-f]{32}$' -and $created.sid -eq $again.sid -and $again.version -eq 1) 'missing SID creation is idempotent'
+        $legacy=@(Get-Users $admin | Where-Object {$_.userId -eq 'ULegacy'})[0]
+        $legacy.sid='caller-attempted-change';$legacy.name='수정한 기존 사용자'
+        $updated=Save-MasterRecord -Context $admin -Type Users -Id ULegacy -Data $legacy -ExpectedVersion $legacy.version -RequestId (New-Request)
+        Assert-True ($updated.userId -eq 'ULegacy' -and $updated.sid -eq 'DEMO-ULegacy' -and $updated.name -eq '수정한 기존 사용자') 'legacy IDs and SID stay unchanged'
+        $withoutSid=$updated | Select-Object * -ExcludeProperty sid
+        $again=Save-MasterRecord -Context $admin -Type Users -Id ULegacy -Data $withoutSid -ExpectedVersion $updated.version -RequestId (New-Request)
+        Assert-True ($again.sid -eq 'DEMO-ULegacy') 'updates without a SID keep the stored value'
+        Assert-Throws {Save-MasterRecord -Context $admin -Type Users -Id 'DifferentId' -Data $again -ExpectedVersion 0 -RequestId (New-Request)} 'ID'
+    }
+
+    Test-Case 'login choices sort by division and name and disambiguate duplicate names' {
+        $one=New-User -Context $admin -Name '동명이인' -Bureau '기계심사국' -Division '같은심사과' -RequestId (New-Request)
+        $two=New-User -Context $admin -Name '동명이인' -Bureau '전기심사국' -Division '같은심사과' -RequestId (New-Request)
+        $three=New-User -Context $admin -Name '동명이인' -Bureau '기계심사국' -Division '같은심사과' -RequestId (New-Request)
+        $plain=New-User -Context $admin -Name '단독 이름' -Division '단독심사과' -RequestId (New-Request)
+        $inactive=New-User -Context $admin -Name '비활성 숨김' -Division '숨김심사과' -RequestId (New-Request) -Active $false
+        $list=@(Get-LoginUsers -Root $testRoot)
+        $duplicates=@($list | Where-Object {$_.name -eq '동명이인'})
+        Assert-True ($duplicates.Count -eq 3 -and @($duplicates.displayName | Select-Object -Unique).Count -eq 3) 'all duplicate labels are distinct'
+        Assert-True (@($duplicates | Where-Object {$_.displayName -like '같은심사과 - 동명이인 (*'}).Count -eq 3) 'disambiguation preserves department-name prefix'
+        Assert-True ((@($list | Where-Object {$_.userId -eq $plain.userId})[0]).displayName -eq '단독심사과 - 단독 이름') 'unique name has no suffix'
+        Assert-True (@($list | Where-Object {$_.userId -eq $inactive.userId}).Count -eq 0) 'inactive users are hidden'
+        Assert-True ((@($list | Where-Object {$_.userId -eq 'U001'})[0]).division -eq '미지정') 'blank division has a usable label'
+        Assert-True (($list.userId -join ',') -eq ((@($list | Sort-Object division,name,userId).userId) -join ',')) 'list has stable department/name/ID ordering'
+        Assert-True (($list.displayName -join '|') -eq ((@(Get-LoginUsers -Root $testRoot).displayName) -join '|')) 'labels stay stable between reads'
+        Assert-Throws {Get-Context -Root $testRoot -UserId $inactive.userId} '활성 사용자'
+    }
+
     $submissionRequest=New-Request
     $case=New-Submission -Context $examiner -Period $month -ApplicationNumber 1020260000001 -RequestId $submissionRequest -Cpc ' H04L 9/00; G06F 21/00 '
     Test-Case 'submission normalization, duplicate protection and idempotent retry' {
@@ -121,6 +167,17 @@ try {
         Assert-Throws {Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents $tooMany} '최대 7'
         Assert-Throws {Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -NoResults $true} '사유'
         Assert-Throws {Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -NoResults $true -NoResultsReason why -Documents $docs} '동시에'
+    }
+
+    Test-Case 'identifier-only AI results publish without a title and preserve hidden legacy text on edit' {
+        $numberCase=New-Submission -Context $admin -Period $month -ApplicationNumber '10-2026-0000099' -RequestId (New-Request)
+        $numberOnly=Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents @(@{identifier=' 10-2025-0000123 '})
+        Assert-True ($numberOnly.data.documents[0].identifier -eq '10-2025-0000123' -and $numberOnly.data.documents[0].title -eq '') 'number alone can be published'
+        Assert-Throws {Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents @(@{identifier='  '})} '식별정보'
+        $withText=@($numberOnly.data.documents);$withText[0].title='보존할 명칭';$withText[0].description='보존할 관련 설명';$withText[0].type='LegacyCustom'
+        $legacy=Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents $withText
+        $edited=Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 2 -RequestId (New-Request) -Status Published -Reason '번호 정정' -Documents @(@{documentId=$legacy.data.documents[0].documentId;identifier='10-2025-0000124'})
+        Assert-True ($edited.data.documents[0].title -eq '보존할 명칭' -and $edited.data.documents[0].description -eq '보존할 관련 설명' -and $edited.data.documents[0].type -eq 'LegacyCustom') 'number-only editing retains legacy fields'
     }
 
     $versions=@{S01=1;S02=1;S03=1}
@@ -303,12 +360,17 @@ try {
         Assert-Throws {Get-Cases $ai $month Assigned} '활성 사용자'
     }
 
-    Test-Case 'production roots disallow demo user override and forged cached identity' {
+    Test-Case 'production roots allow active user selection without matching a Windows SID' {
         $marker=Join-Path $testRoot '.demo-mode.json';$renamed=Join-Path $testRoot '.demo-mode.disabled'
         [IO.File]::Move($marker,$renamed)
         try {
-            Assert-Throws {Get-Context -Root $testRoot -UserId U002} '데모'
-            Assert-Throws {Get-Cases $examiner $month Mine} 'Windows 계정'
+            $selected=Get-Context -Root $testRoot -UserId U002
+            Assert-True ($selected.user.userId -eq 'U002' -and -not $selected.demoMode) 'department/name selector can choose an active production user'
+            Assert-True (@(Get-Cases $selected $month Mine).Count -gt 0) 'selected examiner can use existing case data'
+            Assert-True ((Get-Context -Root $testRoot).user.userId -eq 'U001') 'script default chooses an active admin deterministically'
+            Assert-True (@(Get-LoginUsers -Root $testRoot | Where-Object {$_.userId -eq 'U003'}).Count -eq 0) 'deactivated user is absent from production login choices'
+            Assert-Throws {Get-Context -Root $testRoot -UserId U003} '활성 사용자'
+            Assert-Throws {Get-Cases $ai $month Assigned} '활성 사용자'
         } finally {[IO.File]::Move($renamed,$marker)}
     }
 

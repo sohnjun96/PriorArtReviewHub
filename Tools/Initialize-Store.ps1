@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Root,
     [string]$AdminSid,
-    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]{0,100}$')][string]$AdminId = 'U001',
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_-]{0,100}$')][string]$AdminId,
     [ValidateNotNullOrEmpty()][string]$AdminName = '총괄관리자',
     [ValidatePattern('^\d{4}-(0[1-9]|1[0-2])$')][string]$Period = (Get-Date -Format 'yyyy-MM')
 )
@@ -10,12 +10,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'App/Modules/Storage.psm1') -Force
-if ([string]::IsNullOrWhiteSpace($AdminSid)) {
-    $AdminSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-}
-# Validate before creating anything. A supplied SID need not be the setup operator.
-$sidObject = New-Object Security.Principal.SecurityIdentifier($AdminSid)
-$AdminSid = $sidObject.Value
+if ([string]::IsNullOrWhiteSpace($AdminId)) { $AdminId = 'U' + [guid]::NewGuid().ToString('N') }
+# Legacy explicit IDs remain accepted as metadata. Login uses the selected user,
+# so a new installation never needs a Windows account lookup or a manual SID.
+if ([string]::IsNullOrWhiteSpace($AdminSid)) { $AdminSid = 'APP-' + [guid]::NewGuid().ToString('N') }
 if ([string]::IsNullOrWhiteSpace($AdminName)) { throw '관리자 이름을 입력하세요.' }
 $rootPath = [IO.Path]::GetFullPath($Root)
 if ([IO.File]::Exists($rootPath)) { throw '저장소 경로가 파일입니다.' }

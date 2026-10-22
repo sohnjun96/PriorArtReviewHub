@@ -25,23 +25,40 @@ function Test-DeploymentCase {
 }
 
 try {
-    Test-DeploymentCase 'Production bootstrap binds the actual SID without demo mode' {
+    Test-DeploymentCase 'Production bootstrap creates automatic IDs for selection login' {
         $summary = & (Join-Path $projectPath 'Tools/Initialize-Store.ps1') -Root $storePath -AdminName '운영 초기화 검증'
+        $script:initialAdminId = $summary.adminId
         Import-Module (Join-Path $projectPath 'App/Modules/Workflow.psm1') -Force -DisableNameChecking
-        $context = Get-Context -Root $storePath
-        $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $context = Get-Context -Root $storePath -UserId $summary.adminId
+        $loginUsers = @(Get-LoginUsers -Root $storePath)
         Assert-Deployment (-not $context.demoMode) 'production context'
         Assert-Deployment (-not [IO.File]::Exists((Join-Path $storePath '.demo-mode.json'))) 'no demo marker'
-        Assert-Deployment ($context.user.sid -ceq $currentSid -and $context.user.userId -eq 'U001') 'actual SID maps to initial admin'
+        Assert-Deployment ($summary.adminId -match '^U[a-f0-9]{32}$' -and $context.user.userId -eq $summary.adminId) 'automatic initial user ID'
+        Assert-Deployment ($context.user.sid -match '^APP-[a-f0-9]{32}$' -and $summary.adminSid -eq $context.user.sid) 'automatic internal identity'
+        Assert-Deployment ($loginUsers.Count -eq 1 -and $loginUsers[0].userId -eq $summary.adminId) 'initial admin appears in login choices'
         Assert-Deployment (@(Get-Users -Context $context).Count -eq 1) 'one initial user'
         Assert-Deployment (@(Get-Groups -Context $context).Count -eq 1 -and @(Get-Sources -Context $context).Count -eq 3) 'one group and three sources'
         Assert-Deployment (@($context.user.roles).Count -eq 3 -and @($context.user.roles) -contains 'admin' -and @($context.user.roles) -contains 'examiner' -and @($context.user.roles) -contains 'ai') 'all initial roles'
         $period = Get-Period -Context $context -Period $summary.period
         Assert-Deployment (@($period.members).Count -eq 1 -and @($period.assignments).Count -eq 2) 'single member and two assigned AI methods'
+        Assert-Deployment ($period.members[0].userId -eq $summary.adminId -and @($period.assignments | Where-Object { $_.userId -ne $summary.adminId }).Count -eq 0) 'generated ID used in monthly assignments'
         Assert-Deployment ($summary.recordsCreated -eq 6) 'six initial records'
     }
+    Test-DeploymentCase 'Production users select their identity on the same PC' {
+        $adminContext = Get-Context -Root $storePath -UserId $script:initialAdminId
+        $examiner = New-User -Context $adminContext -Name '동시 사용자' -Bureau '특허심사국' -Division '특허심사과' -Roles @('examiner') -RequestId ([guid]::NewGuid().ToString('N'))
+        $examinerContext = Get-Context -Root $storePath -UserId $examiner.userId
+        $adminAgain = Get-Context -Root $storePath -UserId $script:initialAdminId
+        $loginUsers = @(Get-LoginUsers -Root $storePath)
+        $examinerChoice = @($loginUsers | Where-Object { $_.userId -eq $examiner.userId })
+        Assert-Deployment ($examiner.userId -match '^U[a-f0-9]{32}$' -and $examiner.sid -match '^APP-[a-f0-9]{32}$') 'new user identifiers are automatic'
+        Assert-Deployment ($examinerContext.user.userId -eq $examiner.userId -and $adminAgain.user.userId -eq $script:initialAdminId) 'same Windows process selects either production user'
+        Assert-Deployment ($examinerContext.user.sid -ne $adminAgain.user.sid) 'selected users have distinct internal identities'
+        Assert-Deployment ($loginUsers.Count -eq 2 -and $examinerChoice.Count -eq 1 -and $examinerChoice[0].displayName -ceq '특허심사과 - 동시 사용자') 'login list uses division and name'
+        Assert-Deployment (@(Get-Users -Context $examinerContext).Count -eq 1) 'examiner keeps their role-specific user view'
+    }
     Test-DeploymentCase 'Repeated bootstrap and nonempty targets reject without overwriting' {
-        $firstRecord = Join-Path $storePath 'Master/Users/U001/revisions/000001.json'
+        $firstRecord = Join-Path $storePath ('Master/Users/{0}/revisions/000001.json' -f $script:initialAdminId)
         $before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($firstRecord))
         Assert-DeploymentThrows { & (Join-Path $projectPath 'Tools/Initialize-Store.ps1') -Root $storePath } '비어 있는 새 폴더'
         Assert-Deployment ([Convert]::ToBase64String([IO.File]::ReadAllBytes($firstRecord)) -ceq $before) 'initial revision preserved'
@@ -53,15 +70,15 @@ try {
     }
     Test-DeploymentCase 'Release contains exact modules, XAML and version-specific launchers' {
         $release = & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $deploymentPath -DataRoot $storePath
-        Assert-Deployment ($release.version -eq '0.1.2') 'default release version'
-        foreach ($relative in @('Start.ps1', 'Modules/Storage.psm1', 'Modules/Workflow.psm1', 'Modules/Export.psm1', 'Views/Main.xaml')) {
+        Assert-Deployment ($release.version -eq '0.1.3') 'default release version'
+        foreach ($relative in @('Start.ps1', 'Modules/Storage.psm1', 'Modules/Workflow.psm1', 'Modules/Export.psm1', 'Views/Main.xaml', 'Views/Login.xaml')) {
             $sourceFile = Join-Path (Join-Path $projectPath 'App') $relative
             $copiedFile = Join-Path $release.release $relative
             Assert-Deployment ([IO.File]::Exists($copiedFile)) "published file $relative"
             Assert-Deployment ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $copiedFile -Algorithm SHA256).Hash) "identical copy $relative"
         }
         $launchText = [IO.File]::ReadAllText((Join-Path $deploymentPath 'Launch.ps1'))
-        Assert-Deployment ($launchText.Contains('App\releases\0.1.2\Start.ps1')) 'launcher pins exact release'
+        Assert-Deployment ($launchText.Contains('App\releases\0.1.3\Start.ps1')) 'launcher pins exact release'
         Assert-Deployment ($launchText.Contains($storePath.Replace("'", "''"))) 'launcher pins production data root'
         $commandText = [IO.File]::ReadAllText((Join-Path $deploymentPath '실행.cmd'))
         Assert-Deployment ($commandText.Contains('-STA') -and $commandText.Contains('Launch.ps1') -and $commandText -match '(?i)-ExecutionPolicy\s+RemoteSigned' -and $commandText -notmatch '(?i)-ExecutionPolicy\s+Bypass') 'STA launcher uses process RemoteSigned without Bypass'

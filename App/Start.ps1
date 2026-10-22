@@ -79,7 +79,7 @@ if (-not $script:context) {return}
 $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'Views\Main.xaml'))
 try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
 $script:ui = @{}
-$names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','EditVersionText','NoResultsCheck','NoResultsReasonBox','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','AttachButton','HistoryButton','DeliveryReasonBox','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','EvaluationReasonBox','SaveEvaluationButton','EvaluationVersionText','AdminTab','AdminContentHost','ModeText','StatusText')
+$names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','EditVersionText','NoResultsCheck','NoResultsReasonBox','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','HistoryButton','DeliveryReasonBox','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','EvaluationReasonBox','SaveEvaluationButton','EvaluationVersionText','AdminTab','AdminContentHost','ModeText','StatusText')
 $names += 'CaseExportButton'
 $names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','SwitchUserButton','PersonalWorkTab','PersonalTabs','TargetSelectionTab','EvaluationTab','EvaluationTabs','ResultNumbersBox','AddResultNumbersButton','CaseStateCombo','CasesEmptyText','GoEvaluationButton','DocumentCountText','DeliveryReasonExpander','CaseListTitleText','CaseListHintText','WorkflowHintText')
 foreach ($name in $names) { $script:ui[$name] = $window.FindName($name) }
@@ -122,7 +122,7 @@ function Update-ActionAvailability {
     $ui.CancelSubmissionButton.IsEnabled=$own -and -not $script:busy
     $ui.GoEvaluationButton.IsEnabled=$hasCase -and $script:selectedCase.userId -eq $context.User.userId
     $ui.LoadDeliveryButton.IsEnabled=$hasCase -and $ui.SourceCombo.Items.Count -gt 0
-    foreach ($name in @('ResultNumbersBox','AddResultNumbersButton','AddDocumentButton','RemoveDocumentButton','AttachButton','DraftButton','PublishButton','NoResultsCheck','DeliveryReasonBox')) {$ui[$name].IsEnabled=[bool]$canEdit}
+    foreach ($name in @('ResultNumbersBox','AddResultNumbersButton','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton','NoResultsCheck','DeliveryReasonBox')) {$ui[$name].IsEnabled=[bool]$canEdit}
     $ui.DocumentsGrid.IsReadOnly=-not $canEdit
     $ui.NoResultsReasonBox.IsEnabled=$canEdit -and [bool]$ui.NoResultsCheck.IsChecked
     $ui.SaveEvaluationButton.IsEnabled=$own -and $script:published.Count -gt 0
@@ -520,7 +520,7 @@ function Load-DeliveryEditor {
         $ui.ResultNumbersBox.Clear()
         if ($script:deliveryEdit) {
             foreach ($doc in @($script:deliveryEdit.data.documents)) {
-                $script:documents.Add([pscustomobject]@{documentId=$doc.documentId;type=(Get-UiValue $doc 'type' '특허');identifier=$doc.identifier;title=(Get-UiValue $doc 'title');description=(Get-UiValue $doc 'description');attachments=@($doc.attachments);attachmentCount=@($doc.attachments).Count})
+                $script:documents.Add([pscustomobject]@{documentId=$doc.documentId;type=(Get-UiValue $doc 'type' '특허');identifier=$doc.identifier;title=(Get-UiValue $doc 'title');description=(Get-UiValue $doc 'description');attachments=@($doc.attachments)})
             }
             $ui.NoResultsCheck.IsChecked=[bool]$script:deliveryEdit.data.noResults; $ui.NoResultsReasonBox.Text=[string]$script:deliveryEdit.data.noResultsReason
         } else {$ui.NoResultsCheck.IsChecked=$false;$ui.NoResultsReasonBox.Text=''}
@@ -539,7 +539,7 @@ function Add-ResultNumberRows {
     $existing=@($script:documents | ForEach-Object {$_.identifier.Trim()})
     $numbers=@($numbers | Where-Object {$_ -notin $existing})
     if ($script:documents.Count+$numbers.Count -gt 7) {throw '조사 방식별 출원번호는 최대 7건입니다. 입력내용은 유지됩니다.'}
-    foreach ($number in $numbers) {$script:documents.Add([pscustomobject]@{documentId=[guid]::NewGuid().ToString('N');type='특허';identifier=$number;title='';description='';attachments=@();attachmentCount=0})}
+    foreach ($number in $numbers) {$script:documents.Add([pscustomobject]@{documentId=[guid]::NewGuid().ToString('N');type='특허';identifier=$number;title='';description='';attachments=@()})}
     $ui.ResultNumbersBox.Clear();$script:editDirty=$true
 }
 function Save-DeliveryEditor([string]$Status) {
@@ -727,26 +727,13 @@ $ui.SourceCombo.Add_SelectionChanged({
 $ui.AddDocumentButton.Add_Click({Invoke-UiAction {
     if (-not $script:loadedSource) {throw '편집 자료를 먼저 불러오세요.'}
     if ($script:documents.Count -ge 7) {throw '조사 방식별 문헌은 최대 7건입니다.'}
-    $script:documents.Add([pscustomobject]@{documentId=[guid]::NewGuid().ToString('N');type='특허';identifier='';title='';description='';attachments=@();attachmentCount=0});$script:editDirty=$true
+    $script:documents.Add([pscustomobject]@{documentId=[guid]::NewGuid().ToString('N');type='특허';identifier='';title='';description='';attachments=@()});$script:editDirty=$true
     $row=$script:documents[$script:documents.Count-1]
     $ui.DocumentsGrid.SelectedItem=$row;$ui.DocumentsGrid.ScrollIntoView($row)
     $ui.DocumentsGrid.CurrentCell=New-Object Windows.Controls.DataGridCellInfo($row,$ui.DocumentsGrid.Columns[0])
     [void]$ui.DocumentsGrid.Focus();[void]$ui.DocumentsGrid.BeginEdit()
 }})
 $ui.RemoveDocumentButton.Add_Click({if ($ui.DocumentsGrid.SelectedItem) {[void]$script:documents.Remove($ui.DocumentsGrid.SelectedItem);$script:editDirty=$true}})
-$ui.AttachButton.Add_Click({Invoke-UiAction {
-    $case=Require-Case;$doc=$ui.DocumentsGrid.SelectedItem
-    if (-not $doc -or -not $script:loadedSource) {throw '편집 중인 문헌을 선택하세요.'}
-    $dialog=New-Object Microsoft.Win32.OpenFileDialog;$dialog.Filter='문헌 파일|*.pdf;*.txt;*.docx;*.png;*.jpg|모든 파일|*.*'
-    if ($dialog.ShowDialog($window)) {
-        $script:attachmentDocument=$doc
-        Invoke-UiWork -Work {param($ctx,$case,$source,$path) Import-DeliveryAttachment -Context $ctx -Case $case -SourceId $source -Path $path} -Arguments @($context,$case,$script:loadedSource,$dialog.FileName) -Completed {
-            param($result)
-            $script:attachmentDocument.attachments=@($script:attachmentDocument.attachments)+@($result[0]);$script:attachmentDocument.attachmentCount=$script:attachmentDocument.attachments.Count
-            $ui.DocumentsGrid.Items.Refresh();$script:editDirty=$true;Set-Status '첨부파일 복사 완료. 납품을 저장하면 문헌에 연결됩니다.'
-        }
-    }
-}})
 $ui.HistoryButton.Add_Click({Invoke-UiAction {
     if (-not $script:deliveryEdit) {throw '저장된 편집 자료를 먼저 불러오세요.'}
     $case=Require-Case

@@ -25,7 +25,7 @@ try {
             throw "Control '$name' has no event '$eventName'."
         }
     }
-    foreach ($gridName in @('DocumentsGrid', 'RankGrid', 'RatingsGrid')) {
+    foreach ($gridName in @('DocumentsGrid', 'RankGrid', 'RatingsGrid', 'SubmissionRowsGrid')) {
         $grid = $window.FindName($gridName)
         if ($grid.CanUserAddRows -or $grid.CanUserDeleteRows -or $grid.AutoGenerateColumns) {
             throw "Grid '$gridName' permits uncontrolled row/column creation."

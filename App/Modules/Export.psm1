@@ -323,6 +323,11 @@ function Export-ReviewSnapshot {
     $documentCount = 0
     foreach ($snapshot in $snapshots) {
         $case = $snapshot.Case
+        # These values belong to the submitted case, not the current user profile.
+        # Older submissions have no organization/CPC fields and export as blanks.
+        $examinerBureau = [string](Get-ExportProperty $case 'examinerBureau' '')
+        $examinerDivision = [string](Get-ExportProperty $case 'examinerDivision' '')
+        $cpc = [string](Get-ExportProperty $case 'cpc' '')
         $evaluation = $snapshot.Evaluation
         $evaluationData = Get-ExportProperty $evaluation 'data'
         $ratings = @(Get-ExportProperty $evaluationData 'documentRatings' @())
@@ -333,7 +338,7 @@ function Export-ReviewSnapshot {
         $caseDocumentCount = 0
         foreach ($delivery in $snapshot.Deliveries) { $caseDocumentCount += @(Get-ExportProperty (Get-ExportProperty $delivery 'data') 'documents' @()).Count }
         $caseRows.Add([pscustomobject][ordered]@{
-            period = $Period; groupId = $case.groupId; examiner = $case.examinerName; applicationNumber = [string]$case.applicationNumber
+            period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc
             caseId = $case.caseId; status = $case.status; submissionVersion = $case.version; submittedAt = $case.submittedAt
             duplicateWarning = $(if ([bool](Get-ExportProperty $case 'duplicateWarning' $false)) { '확인 필요' } else { '' })
             publishedSources = $snapshot.Deliveries.Count; documentCount = $caseDocumentCount
@@ -351,14 +356,14 @@ function Export-ReviewSnapshot {
             $rankingValue = if ($ranking.Count -gt 0) { Get-ExportProperty $ranking[0] 'rank' } else { $null }
             $rankingStatus = if ($ranking.Count -gt 0) { Get-ExportProperty $ranking[0] 'status' } else { '미평가' }
             $rankingRows.Add([pscustomobject][ordered]@{
-                period = $Period; groupId = $case.groupId; examiner = $case.examinerName; applicationNumber = [string]$case.applicationNumber; caseId = $case.caseId
+                period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                 sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; evaluatedVersion = $evaluatedVersion
                 rank = $rankingValue; status = $rankingStatus; needsReconfirmation = $(if ($stale -or $sourceStale) { '필요' } else { '' })
             })
             $documents = @(Get-ExportProperty $data 'documents' @())
             if ($documents.Count -eq 0 -and [bool](Get-ExportProperty $data 'noResults' $false)) {
                 $documentRows.Add([pscustomobject][ordered]@{
-                    period = $Period; groupId = $case.groupId; examiner = $case.examinerName; applicationNumber = [string]$case.applicationNumber; caseId = $case.caseId
+                    period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                     sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; documentId = ''; type = '결과 없음'; identifier = ''; title = ''
                     description = Get-ExportProperty $data 'noResultsReason'; attachments = ''
                 })
@@ -376,7 +381,7 @@ function Export-ReviewSnapshot {
                     }
                 }
                 $documentRows.Add([pscustomobject][ordered]@{
-                    period = $Period; groupId = $case.groupId; examiner = $case.examinerName; applicationNumber = [string]$case.applicationNumber; caseId = $case.caseId
+                    period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                     sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; documentId = $documentId; type = $document.type
                     identifier = [string]$document.identifier; title = $document.title; description = $document.description; attachments = ($attachmentNames -join "`n")
                 })
@@ -386,7 +391,7 @@ function Export-ReviewSnapshot {
                 if ($null -ne $ratingData) { [void]$seenRatings.Add($ratingKey) }
                 $cited = Get-ExportProperty $ratingData 'cited'
                 $ratingRows.Add([pscustomobject][ordered]@{
-                    period = $Period; groupId = $case.groupId; examiner = $case.examinerName; applicationNumber = [string]$case.applicationNumber; caseId = $case.caseId
+                    period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                     sourceId = $sourceId; sourceName = $sourceName; deliveryVersion = $sourceVersion; evaluatedVersion = $evaluatedVersion; documentId = $documentId
                     identifier = [string]$document.identifier; title = $document.title; score = Get-ExportProperty $ratingData 'score'
                     cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' }); note = Get-ExportProperty $ratingData 'note'
@@ -401,14 +406,14 @@ function Export-ReviewSnapshot {
             if ($seenRatings.Contains($sourceId + ':' + $documentId)) { continue }
             $cited = Get-ExportProperty $rating 'cited'
             $ratingRows.Add([pscustomobject][ordered]@{
-                period = $Period; groupId = $case.groupId; examiner = $case.examinerName; applicationNumber = [string]$case.applicationNumber; caseId = $case.caseId
+                period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                 sourceId = $sourceId; sourceName = $sourceId; deliveryVersion = $null; evaluatedVersion = Get-ExportProperty $evaluatedVersions $sourceId; documentId = $documentId
                 identifier = ''; title = '현재 납품에 없는 문헌'; score = Get-ExportProperty $rating 'score'; cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' })
                 note = Get-ExportProperty $rating 'note'; needsReconfirmation = '필요'
             })
         }
     }
-    $common = [ordered]@{ period = '운영월'; groupId = '그룹 ID'; examiner = '심사관'; applicationNumber = '출원번호'; caseId = '업무 건 ID' }
+    $common = [ordered]@{ period = '운영월'; groupId = '그룹 ID'; examiner = '심사관'; examinerBureau = '심사국'; examinerDivision = '심사과'; applicationNumber = '출원번호'; cpc = 'CPC'; caseId = '업무 건 ID' }
     $caseColumns = [ordered]@{}; foreach ($key in $common.Keys) { $caseColumns[$key] = $common[$key] }
     $caseColumns['status'] = '제출 상태'; $caseColumns['submissionVersion'] = '제출 버전'; $caseColumns['submittedAt'] = '제출 시각'; $caseColumns['duplicateWarning'] = '다른 심사관 중복 제출'; $caseColumns['publishedSources'] = '납품 방식 수'; $caseColumns['documentCount'] = '납품 문헌 수'; $caseColumns['evaluationVersion'] = '평가 버전'; $caseColumns['evaluationStatus'] = '평가 상태'
     $documentColumns = [ordered]@{}; foreach ($key in $common.Keys) { $documentColumns[$key] = $common[$key] }

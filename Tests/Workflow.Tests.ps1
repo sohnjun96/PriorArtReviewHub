@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $modulePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../App/Modules/Workflow.psm1'))
 Import-Module $modulePath -Force -DisableNameChecking
+Import-Module (Join-Path $PSScriptRoot '../App/Modules/Storage.psm1') -Force -DisableNameChecking
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('AiSearch-WorkflowTests-' + [guid]::NewGuid().ToString('N'))
 $script:passed = 0
 
@@ -30,14 +31,53 @@ try {
         Assert-True ((Get-Users $admin).Count -eq 3) 'three demo users'
         Assert-True ((Get-Period $admin $month).version -eq 1) 'setup never rewrites existing month'
         Assert-True ($examiner.user.userId -eq 'U002') 'explicit demo identity'
+        Assert-True ($examiner.user.bureau -eq '' -and $examiner.user.division -eq '') 'new demo user has blank affiliation'
+    }
+
+    Test-Case 'user affiliation is saved, trimmed and editable with validation' {
+        $profile=[pscustomobject]@{userId='U004';sid='DEMO-U004';name='등록 검증';bureau=' 전기통신심사국 ';division=' 통신심사과 ';roles=@('examiner');active=$true}
+        $saved=Save-MasterRecord -Context $admin -Type Users -Id U004 -Data $profile -ExpectedVersion 0 -RequestId (New-Request)
+        Assert-True ($saved.bureau -eq '전기통신심사국' -and $saved.division -eq '통신심사과') 'new user persists trimmed affiliation'
+        $saved.division='전자심사과'
+        $updated=Save-MasterRecord -Context $admin -Type Users -Id U004 -Data $saved -ExpectedVersion $saved.version -RequestId (New-Request)
+        $loaded=Get-Context -Root $testRoot -UserId U004
+        Assert-True ($updated.version -eq 2 -and $loaded.user.division -eq '전자심사과') 'updated affiliation reloads'
+        $first=@(Get-Revisions -Path $saved.path)[0]
+        Assert-True ($first.data.division -eq '통신심사과') 'original user revision is preserved'
+        $invalid=$updated | Select-Object *;$invalid.bureau=@('not','text')
+        Assert-Throws {Save-MasterRecord -Context $admin -Type Users -Id U004 -Data $invalid -ExpectedVersion 2 -RequestId (New-Request)} '문자열'
+        $invalid=$updated | Select-Object *;$invalid.bureau=@('one entry is still an array')
+        Assert-Throws {Save-MasterRecord -Context $admin -Type Users -Id U004 -Data $invalid -ExpectedVersion 2 -RequestId (New-Request)} '문자열'
+        $invalid=$updated | Select-Object *;$invalid.division=('가'*101)
+        Assert-Throws {Save-MasterRecord -Context $admin -Type Users -Id U004 -Data $invalid -ExpectedVersion 2 -RequestId (New-Request)} '최대 100'
+        $owner=@(Get-Users $admin | Where-Object {$_.userId -eq 'U002'})[0]
+        $owner.bureau='기계금속심사국';$owner.division='운송기계심사과'
+        $null=Save-MasterRecord -Context $admin -Type Users -Id U002 -Data $owner -ExpectedVersion $owner.version -RequestId (New-Request)
+    }
+
+    Test-Case 'legacy users without affiliation load as blank without rewriting history' {
+        $path=Join-Path $testRoot 'Master/Users/ULegacy'
+        $legacy=[pscustomobject]@{userId='ULegacy';sid='DEMO-ULegacy';name='기존 사용자';roles=@('examiner');active=$true}
+        $null=Write-Revision -Path $path -ExpectedVersion 0 -RequestId (New-Request) -ActorId U001 -Kind Users -TargetId ULegacy -Data $legacy
+        $revisionFile=Join-Path $path 'revisions/000001.json';$before=Get-FileHash -LiteralPath $revisionFile
+        $loaded=Get-Context -Root $testRoot -UserId ULegacy
+        $listed=@(Get-Users $admin | Where-Object {$_.userId -eq 'ULegacy'})[0]
+        Assert-True ($loaded.user.bureau -eq '' -and $loaded.user.division -eq '' -and $listed.bureau -eq '' -and $listed.division -eq '') 'missing affiliation projects as blank'
+        Assert-True ((Get-FileHash -LiteralPath $revisionFile).Hash -eq $before.Hash) 'legacy user bytes stay intact'
+        Assert-True ($null -eq (Read-Revision -Path $path).data.PSObject.Properties['bureau']) 'blank read projection is not persisted'
     }
 
     $submissionRequest=New-Request
-    $case=New-Submission -Context $examiner -Period $month -ApplicationNumber 1020260000001 -RequestId $submissionRequest
+    $case=New-Submission -Context $examiner -Period $month -ApplicationNumber 1020260000001 -RequestId $submissionRequest -Cpc ' H04L 9/00; G06F 21/00 '
     Test-Case 'submission normalization, duplicate protection and idempotent retry' {
         Assert-True ($case.applicationNumber -eq '10-2026-0000001') 'normalize 13 digits'
-        $again=New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000001' -RequestId $submissionRequest
+        $again=New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000001' -RequestId $submissionRequest -Cpc 'H04L 9/00; G06F 21/00'
         Assert-True ($again.caseId -eq $case.caseId) 'same request returns same case'
+        Assert-True ($case.cpc -eq 'H04L 9/00; G06F 21/00') 'CPC is trimmed and persisted as text'
+        Assert-True ($case.examinerBureau -eq '기계금속심사국' -and $case.examinerDivision -eq '운송기계심사과') 'submission snapshots authoritative user affiliation'
+        Assert-Throws {New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000001' -RequestId $submissionRequest -Cpc 'H04L 1/00'} '요청 ID'
+        Assert-Throws {New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000001' -RequestId $submissionRequest} '요청 ID'
+        Assert-Throws {New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000002' -RequestId (New-Request) -Cpc ('A'*501)} '최대 500'
         Assert-Throws {New-Submission $examiner $month '10-2026-0000001' (New-Request)} '이미 제출'
         Assert-Throws {New-Submission $examiner $month '10-2026-0000002' $submissionRequest} '요청 ID'
         Assert-Throws {New-Submission $examiner $month 'bad' (New-Request)} '출원번호'
@@ -49,6 +89,17 @@ try {
         Assert-Throws {Save-Delivery -Context $examiner -Case $case -SourceId S03 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents @((New-Document P1))} '권한'
         Assert-Throws {Get-Evaluation $ai $case} '권한'
         Assert-True (@(Get-Cases $ai $month Assigned).Count -eq 1) 'AI sees assigned group cases'
+    }
+
+    Test-Case 'affiliation updates do not change existing submission snapshots' {
+        $owner=@(Get-Users $admin | Where-Object {$_.userId -eq 'U002'})[0]
+        $owner.bureau='전기통신심사국';$owner.division='통신심사과'
+        $null=Save-MasterRecord -Context $admin -Type Users -Id U002 -Data $owner -ExpectedVersion $owner.version -RequestId (New-Request)
+        $reloaded=@(Get-Cases $examiner $month Mine | Where-Object {$_.caseId -eq $case.caseId})[0]
+        Assert-True ($reloaded.examinerBureau -eq '기계금속심사국' -and $reloaded.examinerDivision -eq '운송기계심사과') 'record retains submission-time affiliation'
+        Assert-True ($reloaded.cpc -eq $case.cpc) 'CPC remains attached to its case'
+        $again=New-Submission -Context $examiner -Period $month -ApplicationNumber $case.applicationNumber -RequestId $submissionRequest -Cpc $case.cpc
+        Assert-True ($again.caseId -eq $case.caseId -and $again.examinerDivision -eq '운송기계심사과') 'retry returns original snapshot despite profile change'
     }
 
     $docs=@((New-Document P1))
@@ -152,13 +203,38 @@ try {
     }
 
     Test-Case 'cancellation preserves original submission and blocks subsequent writes' {
-        $extra=New-Submission $examiner $month '10-2026-0000002' (New-Request)
+        $extra=New-Submission $examiner $month '10-2026-0000002' (New-Request) '' 'G06F 16/00'
+        $owner=@(Get-Users $admin | Where-Object {$_.userId -eq 'U002'})[0]
+        $owner.bureau='변경된 심사국';$owner.division='변경된 심사과'
+        $null=Save-MasterRecord -Context $admin -Type Users -Id U002 -Data $owner -ExpectedVersion $owner.version -RequestId (New-Request)
         $cancelRequest=New-Request
         $cancelled=Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '번호 정정'
         Assert-True ($cancelled.status -eq 'Cancelled' -and $cancelled.version -eq 2) 'cancel appends revision'
+        Assert-True ($cancelled.cpc -eq 'G06F 16/00' -and $cancelled.examinerBureau -eq $extra.examinerBureau -and $cancelled.examinerDivision -eq $extra.examinerDivision) 'cancel preserves original CPC and affiliation snapshot'
         Assert-True ((Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '번호 정정').version -eq 2) 'cancel retry'
         Assert-Throws {Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '다른 사유'} '요청 ID'
         Assert-Throws {Save-Delivery -Context $examiner -Case $extra -SourceId S01 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -NoResults $true -NoResultsReason none} '취소'
+    }
+
+    Test-Case 'legacy submissions retry with the original fingerprint and blank new fields' {
+        $legacyRequest=New-Request
+        # This is the exact sorted JSON fingerprint input used before CPC existed.
+        $legacyInput='{"applicationNumber":"10-2026-0000003","operation":"NewSubmission","period":"'+$month+'","reason":"","userId":"U002"}'
+        $hash=[Security.Cryptography.SHA256]::Create()
+        try {$legacyFingerprint=([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($legacyInput)))).Replace('-','').ToLowerInvariant()}
+        finally {$hash.Dispose()}
+        $path=Join-Path $testRoot ('Data/'+$month+'/G01/Submissions/U002/CLegacyCpc')
+        $legacy=[pscustomobject]@{caseId='CLegacyCpc';period=$month;groupId='G01';userId='U002';examinerName='기존 심사관';applicationNumber='10-2026-0000003';status='Submitted';submittedAt=[datetimeoffset]::UtcNow.ToString('o');duplicateWarning=$false;requestFingerprint=$legacyFingerprint}
+        $null=Write-Revision -Path $path -ExpectedVersion 0 -RequestId $legacyRequest -ActorId U002 -Kind Submission -TargetId CLegacyCpc -Data $legacy
+        $revisionFile=Join-Path $path 'revisions/000001.json';$before=Get-FileHash -LiteralPath $revisionFile
+        $loaded=@(Get-Cases $examiner $month Mine | Where-Object {$_.caseId -eq 'CLegacyCpc'})[0]
+        Assert-True ($loaded.cpc -eq '' -and $loaded.examinerBureau -eq '' -and $loaded.examinerDivision -eq '') 'legacy case stays blank instead of taking current user affiliation'
+        $retry=New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000003' -RequestId $legacyRequest -Cpc '  '
+        Assert-True ($retry.caseId -eq $loaded.caseId -and $retry.version -eq 1 -and $retry.cpc -eq '') 'blank CPC retry uses exact legacy fingerprint'
+        Assert-Throws {New-Submission -Context $examiner -Period $month -ApplicationNumber '10-2026-0000003' -RequestId $legacyRequest -Cpc 'H04L 9/00'} '요청 ID'
+        Assert-True ((Get-FileHash -LiteralPath $revisionFile).Hash -eq $before.Hash) 'legacy submission bytes stay intact after reads and retry'
+        $cancelled=Cancel-Submission -Context $examiner -Case $loaded -ExpectedVersion 1 -RequestId (New-Request) -Reason '기존 건 취소'
+        Assert-True ($cancelled.cpc -eq '' -and $cancelled.examinerBureau -eq '' -and $cancelled.examinerDivision -eq '') 'legacy cancellation keeps historical fields blank'
     }
 
     Test-Case 'month closure waits for shared save handles while shared handles coexist' {

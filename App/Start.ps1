@@ -23,6 +23,7 @@ try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $r
 $script:ui = @{}
 $names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','EditVersionText','NoResultsCheck','NoResultsReasonBox','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','AttachButton','HistoryButton','DeliveryReasonBox','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','EvaluationReasonBox','SaveEvaluationButton','EvaluationVersionText','AdminTab','PeriodStateText','ClosePeriodButton','ReopenPeriodButton','AdminReasonBox','AdminKindCombo','AdminIdBox','AdminLoadButton','AdminSaveButton','AdminJsonBox','ModeText','StatusText')
 $names += 'CaseExportButton'
+$names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','UserFieldsPanel','UserNameBox','UserSidBox','UserBureauBox','UserDivisionBox','UserExaminerCheck','UserAiCheck','UserAdminCheck','UserActiveCheck')
 foreach ($name in $names) { $script:ui[$name] = $window.FindName($name) }
 $script:busy = $false
 $script:changing = $false
@@ -37,6 +38,7 @@ $script:allSources = @()
 $script:documents = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:ratings = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:ranks = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
+$script:submissionRows = New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
 $script:requests = @{}
 $script:editDirty = $false
 $script:evalDirty = $false
@@ -64,6 +66,20 @@ function Get-Request([string]$Key,$Payload) {
 function Confirm-Discard {
     if (-not ($script:editDirty -or $script:evalDirty -or $script:adminDirty)) { return $true }
     return ([Windows.MessageBox]::Show($window,'저장하지 않은 입력을 버리고 이동할까요?','입력내용 확인','YesNo','Question') -eq 'Yes')
+}
+function Has-PendingSubmissions {
+    return $script:submissionRows.Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($ui.ApplicationNumberBox.Text) -or -not [string]::IsNullOrWhiteSpace($ui.CpcBox.Text) -or -not [string]::IsNullOrWhiteSpace($ui.SubmissionBox.Text)
+}
+function Save-TestScreenshot([string]$Suffix='') {
+    if (-not $ScreenshotPath) {return}
+    $path=$ScreenshotPath
+    if ($Suffix) {$path=Join-Path ([IO.Path]::GetDirectoryName($ScreenshotPath)) (([IO.Path]::GetFileNameWithoutExtension($ScreenshotPath))+$Suffix+'.png')}
+    $window.UpdateLayout()
+    $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap ([int]$window.ActualWidth),([int]$window.ActualHeight),96,96,([Windows.Media.PixelFormats]::Pbgra32)
+    $bitmap.Render($window)
+    $encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder
+    $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+    $stream=[IO.File]::Create($path);try {$encoder.Save($stream)} finally {$stream.Dispose()}
 }
 function Invoke-UiWork([scriptblock]$Work,[object[]]$Arguments,[scriptblock]$Completed) {
     if ($script:busy) { throw '현재 작업이 끝난 뒤 다시 시도하세요.' }
@@ -110,9 +126,69 @@ function Invoke-UiWork([scriptblock]$Work,[object[]]$Arguments,[scriptblock]$Com
 }
 function Get-SelectedPeriod { if ($ui.PeriodCombo.SelectedItem) { return [string]$ui.PeriodCombo.SelectedItem.period }; throw '운영월을 선택하세요.' }
 function Require-Case { if (-not $script:selectedCase) { throw '왼쪽 목록에서 출원을 선택하세요.' }; return $script:selectedCase }
+function Get-UiValue($Object,[string]$Name,$Default='') {
+    if ($null -eq $Object) {return $Default}
+    if ($Object -is [Collections.IDictionary]) {if ($Object.Contains($Name) -and $null -ne $Object[$Name]) {return $Object[$Name]};return $Default}
+    $property=$Object.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {return $Default}
+    return $property.Value
+}
+function Set-Identity {
+    $affiliation=@((Get-UiValue $context.User 'bureau'),(Get-UiValue $context.User 'division')) | Where-Object {$_}
+    $ui.IdentityText.Text=(@($context.User.name,$context.User.userId,($affiliation -join ' / '),($context.User.roles -join ', ')) | Where-Object {$_}) -join ' · '
+}
+function Add-SubmissionInputRows([bool]$IncludeSingle=$true,[bool]$IncludePaste=$true) {
+    $pending=@()
+    if ($IncludeSingle -and ($ui.ApplicationNumberBox.Text.Trim() -or $ui.CpcBox.Text.Trim())) {
+        if (-not $ui.ApplicationNumberBox.Text.Trim()) {throw 'CPC에 대응하는 출원번호를 입력하세요.'}
+        $pending += [pscustomobject]@{applicationNumber=$ui.ApplicationNumberBox.Text.Trim();cpc=$ui.CpcBox.Text.Trim()}
+    }
+    if ($IncludePaste) {
+        foreach ($line in @($ui.SubmissionBox.Text -split '[\r\n]+')) {
+            if ([string]::IsNullOrWhiteSpace($line)) {continue}
+            $columns=@($line -split "`t")
+            if ($columns.Count -gt 2) {throw '붙여넣기는 출원번호와 CPC 두 열만 선택하세요.'}
+            $number=$columns[0].Trim()
+            if (-not $number) {throw '붙여넣기 행의 첫 열에 출원번호가 필요합니다.'}
+            $cpc='';if ($columns.Count -eq 2) {$cpc=$columns[1].Trim()}
+            $pending += [pscustomobject]@{applicationNumber=$number;cpc=$cpc}
+        }
+    }
+    foreach ($row in $pending) {$script:submissionRows.Add([pscustomobject]@{rowKey=[guid]::NewGuid().ToString('N');applicationNumber=$row.applicationNumber;cpc=$row.cpc;message=''})}
+    if ($IncludeSingle) {$ui.ApplicationNumberBox.Clear();$ui.CpcBox.Clear()}
+    if ($IncludePaste) {$ui.SubmissionBox.Clear()}
+}
+function Update-AdminEditor {
+    $isUser=$ui.AdminKindCombo.SelectedItem -and $ui.AdminKindCombo.SelectedItem.Tag -eq 'Users'
+    $ui.UserFieldsPanel.Visibility=if ($isUser) {'Visible'} else {'Collapsed'}
+    $ui.AdminJsonBox.Visibility=if ($isUser) {'Collapsed'} else {'Visible'}
+    $ui.UserFieldsPanel.IsEnabled=$isUser -and $script:adminLoadedKind -eq 'Users' -and $ui.AdminIdBox.Text.Trim() -eq $script:adminLoadedId
+}
+function Set-UserForm($Data) {
+    $ui.UserNameBox.Text=[string](Get-UiValue $Data 'name')
+    $ui.UserSidBox.Text=[string](Get-UiValue $Data 'sid')
+    $ui.UserBureauBox.Text=[string](Get-UiValue $Data 'bureau')
+    $ui.UserDivisionBox.Text=[string](Get-UiValue $Data 'division')
+    $roles=@(Get-UiValue $Data 'roles' @('examiner'))
+    $ui.UserExaminerCheck.IsChecked='examiner' -in $roles
+    $ui.UserAiCheck.IsChecked='ai' -in $roles
+    $ui.UserAdminCheck.IsChecked='admin' -in $roles
+    $ui.UserActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true)
+}
+function Read-UserForm {
+    $data=ConvertFrom-Json -InputObject $ui.AdminJsonBox.Text
+    if ($null -eq $data -or $data -isnot [pscustomobject]) {throw '사용자 정보를 먼저 불러오세요.'}
+    $roles=@();if ($ui.UserExaminerCheck.IsChecked) {$roles+='examiner'};if ($ui.UserAiCheck.IsChecked) {$roles+='ai'};if ($ui.UserAdminCheck.IsChecked) {$roles+='admin'}
+    $fields=@{userId=$script:adminLoadedId;name=$ui.UserNameBox.Text.Trim();sid=$ui.UserSidBox.Text.Trim();bureau=$ui.UserBureauBox.Text.Trim();division=$ui.UserDivisionBox.Text.Trim();roles=@($roles);active=[bool]$ui.UserActiveCheck.IsChecked}
+    foreach ($key in $fields.Keys) {$data | Add-Member -NotePropertyName $key -NotePropertyValue $fields[$key] -Force}
+    return $data
+}
 function Update-Filter {
     $search = $ui.SearchBox.Text.Trim()
-    $filtered = @($script:cases | Where-Object { -not $search -or $_.applicationNumber.Contains($search) -or $_.examinerName.Contains($search) })
+    $filtered = @($script:cases | Where-Object {
+        $text=@($_.applicationNumber,$_.examinerName,(Get-UiValue $_ 'cpc'),(Get-UiValue $_ 'examinerBureau'),(Get-UiValue $_ 'examinerDivision')) -join "`n"
+        -not $search -or $text.IndexOf($search,[StringComparison]::OrdinalIgnoreCase) -ge 0
+    })
     $ui.CasesGrid.ItemsSource = $filtered
     $ui.CaseCountText.Text = "전체 $($script:cases.Count)건 · 표시 $($filtered.Count)건"
 }
@@ -122,6 +198,7 @@ function Clear-Detail {
     $script:documents.Clear(); $script:ratings.Clear(); $script:ranks.Clear()
     $ui.PublishedGrid.ItemsSource=@(); $ui.CaseTitle.Text='출원을 등록하거나 목록에서 선택하세요'
     $ui.CaseSubtitle.Text='제출 → 조사 방식별 납품 → 문헌 평가 및 품질 순위'
+    $ui.CaseMetadataText.Text=''
     $ui.EditVersionText.Text=''; $ui.EvaluationVersionText.Text=''
 }
 function Load-Cases {
@@ -155,6 +232,10 @@ function Show-CaseDetail($Case) {
     $script:selectedCase=$Case
     $script:lastCase=$Case
     $ui.CaseTitle.Text=$Case.applicationNumber
+    $cpc=[string](Get-UiValue $Case 'cpc');if (-not $cpc) {$cpc='미입력'}
+    $affiliation=@((Get-UiValue $Case 'examinerBureau'),(Get-UiValue $Case 'examinerDivision')) | Where-Object {$_}
+    $ui.CaseMetadataText.Text=(@("CPC: $cpc",($affiliation -join ' / ')) | Where-Object {$_}) -join ' · '
+    $ui.CaseMetadataText.ToolTip=$ui.CaseMetadataText.Text
     $ui.CaseSubtitle.Text="$($Case.examinerName) · $($Case.groupId) · $($Case.caseId)"
     Invoke-UiWork -Work {
         param($ctx,$case)
@@ -303,7 +384,7 @@ function Export-Current([bool]$IncludeAttachments,[string]$CaseId='') {
     }
 }
 
-$ui.IdentityText.Text="$($context.User.name) · $($context.User.userId) · $($context.User.roles -join ', ')"
+Set-Identity
 $ui.ModeText.Text=if ($Demo) {'로컬 시연 · 현재 Windows 계정'} else {"공유 저장소 · $DataRoot"}
 $ui.AdminTab.Visibility=if ('Admin' -in $context.User.roles) {'Visible'} else {'Collapsed'}
 $scopes=@([pscustomobject]@{id='Mine';name='내 제출 · 내 납품자료 · 내 평가'})
@@ -312,9 +393,15 @@ if ('Admin' -in $context.User.roles) {$scopes += [pscustomobject]@{id='All';name
 $ui.ScopeCombo.ItemsSource=$scopes;$ui.ScopeCombo.SelectedIndex=0
 $ui.PeriodCombo.ItemsSource=@(Get-Periods -Context $context);$ui.PeriodCombo.SelectedIndex=0
 $ui.AdminKindCombo.SelectedIndex=0
+Update-AdminEditor
 $ui.DocumentsGrid.ItemsSource=$script:documents;$ui.RatingsGrid.ItemsSource=$script:ratings;$ui.RankGrid.ItemsSource=$script:ranks
+$ui.SubmissionRowsGrid.ItemsSource=$script:submissionRows
 $ui.RefreshButton.Add_Click({Invoke-UiAction {if (Confirm-Discard) {Load-Cases}}})
-$ui.PeriodCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Invoke-UiAction {if (Confirm-Discard) {Load-Cases} else {$script:changing=$true;$ui.PeriodCombo.SelectedItem=$script:lastPeriod;$script:changing=$false}}}})
+$ui.PeriodCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Invoke-UiAction {
+    $canChange=Confirm-Discard
+    if ($canChange -and (Has-PendingSubmissions)) {$canChange=[Windows.MessageBox]::Show($window,'등록 전 출원 입력이 있습니다. 입력내용을 유지하고 새 운영월로 이동할까요?','등록 대상 월 확인','YesNo','Question') -eq 'Yes'}
+    if ($canChange) {Load-Cases} else {$script:changing=$true;$ui.PeriodCombo.SelectedItem=$script:lastPeriod;$script:changing=$false}
+}}})
 $ui.ScopeCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Invoke-UiAction {if (Confirm-Discard) {Load-Cases} else {$script:changing=$true;$ui.ScopeCombo.SelectedItem=$script:lastScope;$script:changing=$false}}}})
 $ui.SearchBox.Add_TextChanged({if (-not $script:changing) {Update-Filter}})
 $ui.CasesGrid.Add_SelectionChanged({
@@ -324,20 +411,31 @@ $ui.CasesGrid.Add_SelectionChanged({
 $ui.SubmitButton.Add_Click({Invoke-UiAction {
     if (-not (Confirm-Discard)) {return}
     $period=Get-SelectedPeriod
-    $numbers=@($ui.SubmissionBox.Text -split '[\r\n]+' | ForEach-Object {$_.Trim()} | Where-Object {$_})
-    if (-not $numbers.Count) {throw '출원번호를 입력하세요.'}
-    $jobs=@(foreach ($number in $numbers) {[pscustomobject]@{number=$number;request=(Get-Request "submit:$period`:$number" @{period=$period;number=$number})}})
+    Add-SubmissionInputRows
+    [void]$ui.SubmissionRowsGrid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true);[void]$ui.SubmissionRowsGrid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)
+    if (-not $script:submissionRows.Count) {throw '출원번호와 CPC를 입력하거나 붙여넣으세요.'}
+    $jobs=@(foreach ($row in $script:submissionRows) {
+        $number=[string]$row.applicationNumber;$cpc=[string]$row.cpc
+        [pscustomobject]@{rowKey=$row.rowKey;number=$number;cpc=$cpc;request=(Get-Request "submit:$period`:$number" @{period=$period;number=$number;cpc=$cpc})}
+    })
     Set-Status '출원번호 확인 및 등록 중…'
     Invoke-UiWork -Work {
         param($ctx,$period,$jobs)
-        foreach ($job in $jobs) {try {$record=New-Submission -Context $ctx -Period $period -ApplicationNumber $job.number -RequestId $job.request;[pscustomobject]@{number=$job.number;success=$true;message=$(if ($record.duplicateWarning) {'등록 확인 · 같은 달 다른 심사관 제출 건과 중복되어 관리자 확인이 필요합니다.'} else {'등록 확인'})}} catch {[pscustomobject]@{number=$job.number;success=$false;message=$_.Exception.Message}}}
+        foreach ($job in $jobs) {try {$record=New-Submission -Context $ctx -Period $period -ApplicationNumber $job.number -Cpc $job.cpc -RequestId $job.request;[pscustomobject]@{rowKey=$job.rowKey;number=$job.number;success=$true;message=$(if ($record.duplicateWarning) {'등록 확인 · 다른 심사관과 중복 확인 필요'} else {'등록 확인'})}} catch {[pscustomobject]@{rowKey=$job.rowKey;number=$job.number;success=$false;message=$_.Exception.Message}}}
     } -Arguments @($context,$period,$jobs) -Completed {
         param($result)
         $ui.SubmissionResult.Text=($result | ForEach-Object {"$($_.number) · $($_.message)"}) -join "`n"
-        $ui.SubmissionBox.Text=(@($result | Where-Object {-not $_.success} | ForEach-Object {$_.number}) -join "`r`n")
+        foreach ($entry in $result) {
+            $row=@($script:submissionRows | Where-Object {$_.rowKey -eq $entry.rowKey}) | Select-Object -First 1
+            if ($row) {if ($entry.success) {[void]$script:submissionRows.Remove($row)} else {$row.message=$entry.message}}
+        }
+        $ui.SubmissionRowsGrid.Items.Refresh()
         Load-Cases
     }
 }})
+$ui.AddSubmissionRowButton.Add_Click({Invoke-UiAction {Add-SubmissionInputRows $true $false}})
+$ui.AddPastedRowsButton.Add_Click({Invoke-UiAction {Add-SubmissionInputRows $false $true}})
+$ui.RemoveSubmissionRowButton.Add_Click({if ($ui.SubmissionRowsGrid.SelectedItem) {[void]$script:submissionRows.Remove($ui.SubmissionRowsGrid.SelectedItem)}})
 $ui.CancelSubmissionButton.Add_Click({Invoke-UiAction {
     if (-not (Confirm-Discard)) {return}
     $case=Require-Case
@@ -412,8 +510,13 @@ $ui.AdminLoadButton.Add_Click({Invoke-UiAction {
         $data=$result[0];$script:adminVersion=[int]$data.version
         $script:adminLoadedKind=[string]$ui.AdminKindCombo.SelectedItem.Tag;$script:adminLoadedId=$ui.AdminIdBox.Text.Trim()
         $clean=[ordered]@{};foreach ($prop in $data.PSObject.Properties) {if ($prop.Name -notin @('version','path')) {$clean[$prop.Name]=$prop.Value}}
+        if ($script:adminLoadedKind -eq 'Users' -and -not $clean.Contains('userId')) {
+            $clean=[ordered]@{userId=$script:adminLoadedId;name='';sid='';bureau='';division='';roles=@('examiner');active=$true}
+        }
         $script:changing=$true
         $ui.AdminJsonBox.Text=ConvertTo-Json -InputObject $clean -Depth 40
+        if ($script:adminLoadedKind -eq 'Users') {Set-UserForm $clean}
+        Update-AdminEditor
         $script:adminDirty=$false;$script:changing=$false
         Set-Status "기준정보 $script:adminVersion 판을 불러왔습니다."
     }
@@ -421,17 +524,31 @@ $ui.AdminLoadButton.Add_Click({Invoke-UiAction {
 $ui.AdminSaveButton.Add_Click({Invoke-UiAction {
     $kind=[string]$ui.AdminKindCombo.SelectedItem.Tag;$id=$ui.AdminIdBox.Text.Trim()
     if ($kind -ne $script:adminLoadedKind -or $id -ne $script:adminLoadedId) {throw '대상 ID를 먼저 불러오세요. 신규 ID도 불러오기 후 등록할 수 있습니다.'}
-    $data=ConvertFrom-Json -InputObject $ui.AdminJsonBox.Text
+    $data=if ($kind -eq 'Users') {Read-UserForm} else {ConvertFrom-Json -InputObject $ui.AdminJsonBox.Text}
     $payload=@{kind=$kind;id=$id;data=$data;expected=$script:adminVersion;reason=$ui.AdminReasonBox.Text}
     $request=Get-Request "master:$kind`:$id" $payload
     Invoke-UiWork -Work {
         param($ctx,$payload,$request)
         if ($payload.kind -eq 'Period') {Save-Period -Context $ctx -Period $payload.id -ExpectedVersion $payload.expected -RequestId $request -Data $payload.data -Reason $payload.reason}
         else {Save-MasterRecord -Context $ctx -Kind $payload.kind -Id $payload.id -ExpectedVersion $payload.expected -RequestId $request -Data $payload.data -Reason $payload.reason}
-    } -Arguments @($context,$payload,$request) -Completed {param($result) $script:adminVersion=[int]$result[0].version;$script:adminDirty=$false;Set-Status "설정 $script:adminVersion 판 저장 완료. 새 운영월은 프로그램을 다시 실행하면 목록에 표시됩니다."}
+    } -Arguments @($context,$payload,$request) -Completed {
+        param($result)
+        $script:adminVersion=[int]$result[0].version;$script:adminDirty=$false
+        if ($script:adminLoadedKind -eq 'Users' -and $script:adminLoadedId -eq $context.User.userId) {$script:context=Get-Context -Root $context.Root;Set-Identity}
+        Set-Status "설정 $script:adminVersion 판 저장 완료. 새 운영월은 프로그램을 다시 실행하면 목록에 표시됩니다."
+    }
 }})
 $ui.AdminJsonBox.Add_TextChanged({if (-not $script:changing) {$script:adminDirty=$true}})
-$window.Add_Closing({param($sender,$eventArgs) if ($script:busy) {$eventArgs.Cancel=$true;Set-Status '진행 중인 저장·조회가 끝난 뒤 종료하세요.'} elseif (-not (Confirm-Discard)) {$eventArgs.Cancel=$true}})
+$ui.AdminKindCombo.Add_SelectionChanged({Update-AdminEditor})
+$ui.AdminIdBox.Add_TextChanged({Update-AdminEditor})
+foreach ($control in @($ui.UserNameBox,$ui.UserSidBox,$ui.UserBureauBox,$ui.UserDivisionBox)) {$control.Add_TextChanged({if (-not $script:changing) {$script:adminDirty=$true}})}
+foreach ($control in @($ui.UserExaminerCheck,$ui.UserAiCheck,$ui.UserAdminCheck,$ui.UserActiveCheck)) {$control.Add_Click({if (-not $script:changing) {$script:adminDirty=$true}})}
+$window.Add_Closing({
+    param($sender,$eventArgs)
+    if ($script:busy) {$eventArgs.Cancel=$true;Set-Status '진행 중인 저장·조회가 끝난 뒤 종료하세요.'}
+    elseif (-not (Confirm-Discard)) {$eventArgs.Cancel=$true}
+    elseif ((Has-PendingSubmissions) -and [Windows.MessageBox]::Show($window,'등록하지 않은 출원 입력이 있습니다. 입력내용을 버리고 종료할까요?','출원 입력 확인','YesNo','Question') -ne 'Yes') {$eventArgs.Cancel=$true}
+})
 $window.Add_ContentRendered({Invoke-UiAction {Load-Cases}})
 if ($SmokeTest) {
     $script:smokeTimer=New-Object Windows.Threading.DispatcherTimer
@@ -448,27 +565,45 @@ if ($SmokeTest) {
             $ui.MainTabs.SelectedIndex=3
             return
         }
-        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 5) {
+        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 9) {
             Invoke-UiAction {
                 switch ($script:smokeStage) {
-                    0 {Load-DeliveryEditor}
-                    1 {Save-DeliveryEditor 'Draft'}
-                    2 {$ui.DeliveryReasonBox.Text='화면 자동 검증 재납품';Save-DeliveryEditor 'Published'}
-                    3 {$script:editDirty=$false;Show-CaseDetail $script:selectedCase}
-                    4 {Save-EvaluationEditor}
+                    0 {
+                        $script:smokeOriginalCaseId=$script:selectedCase.caseId
+                        $ui.MainTabs.SelectedIndex=4;$ui.AdminKindCombo.SelectedIndex=0;$ui.AdminIdBox.Text='U100'
+                        $ui.AdminLoadButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    1 {
+                        $ui.UserNameBox.Text='화면 등록 심사관';$ui.UserSidBox.Text='DEMO-GUI-U100';$ui.UserBureauBox.Text='화면 등록 심사국';$ui.UserDivisionBox.Text='화면 등록 심사과'
+                        Save-TestScreenshot '-Users'
+                        $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    2 {
+                        $ui.MainTabs.SelectedIndex=0
+                        $ui.ApplicationNumberBox.Text='10-2026-0000456';$ui.CpcBox.Text='H04L 9/00';Add-SubmissionInputRows $true $false
+                        $ui.SubmissionBox.Text="bad-number`tB25J 9/00";Add-SubmissionInputRows $false $true
+                        Save-TestScreenshot '-Submissions'
+                        $ui.SubmitButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    3 {
+                        if ($script:submissionRows.Count -ne 1 -or $script:submissionRows[0].cpc -ne 'B25J 9/00' -or -not $script:submissionRows[0].message) {throw '실패한 출원 행의 CPC와 입력내용이 보존되지 않았습니다.'}
+                        $script:submissionRows.Clear()
+                        $ui.MainTabs.SelectedIndex=3
+                        $ui.CasesGrid.SelectedItem=@($script:cases | Where-Object {$_.caseId -eq $script:smokeOriginalCaseId})[0]
+                    }
+                    4 {Load-DeliveryEditor}
+                    5 {Save-DeliveryEditor 'Draft'}
+                    6 {$ui.DeliveryReasonBox.Text='화면 자동 검증 재납품';Save-DeliveryEditor 'Published'}
+                    7 {$script:editDirty=$false;Show-CaseDetail $script:selectedCase}
+                    8 {Save-EvaluationEditor}
                 }
                 $script:smokeStage++
             }
             return
         }
         $script:smokeTimer.Stop()
-        if ($ScreenshotPath) {
-            $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap ([int]$window.ActualWidth),([int]$window.ActualHeight),96,96,([Windows.Media.PixelFormats]::Pbgra32)
-            $bitmap.Render($window)
-            $encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder
-            $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
-            $stream=[IO.File]::Create($ScreenshotPath);try {$encoder.Save($stream)} finally {$stream.Dispose()}
-        }
+        Save-TestScreenshot
+        $script:submissionRows.Clear();$ui.ApplicationNumberBox.Clear();$ui.CpcBox.Clear();$ui.SubmissionBox.Clear()
         $script:editDirty=$false;$script:evalDirty=$false;$window.Close()
     });$script:smokeTimer.Start()
 }

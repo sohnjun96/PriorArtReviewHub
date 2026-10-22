@@ -3,8 +3,13 @@ $taskProject=Split-Path $PSScriptRoot -Parent
 Import-Module (Join-Path $taskProject 'App\Modules\Workflow.psm1') -Force -DisableNameChecking
 $taskRoot=Join-Path ([IO.Path]::GetTempPath()) ('AIReview-Gui-'+[guid]::NewGuid().ToString('N'))
 $taskContext=Initialize-Demo -Root $taskRoot
+$taskProfile=@(Get-Users -Context $taskContext | Where-Object {$_.userId -eq 'U001'})[0]
+$taskProfile | Add-Member -NotePropertyName bureau -NotePropertyValue '검증 심사국' -Force
+$taskProfile | Add-Member -NotePropertyName division -NotePropertyValue '검증 심사과' -Force
+[void](Save-MasterRecord -Context $taskContext -Kind Users -Id U001 -Data $taskProfile -ExpectedVersion $taskProfile.version -RequestId ([guid]::NewGuid().ToString('N')))
+$taskContext=Get-Context -Root $taskRoot
 $taskPeriod=Get-Date -Format 'yyyy-MM'
-$taskCase=New-Submission -Context $taskContext -Period $taskPeriod -ApplicationNumber '10-2026-0000123' -RequestId ([guid]::NewGuid().ToString('N'))
+$taskCase=New-Submission -Context $taskContext -Period $taskPeriod -ApplicationNumber '10-2026-0000123' -Cpc 'G06F 16/00' -RequestId ([guid]::NewGuid().ToString('N'))
 $taskVersions=@{}
 $taskRatings=@()
 $taskRankings=@()
@@ -37,8 +42,12 @@ try {
     if (-not [IO.File]::Exists($taskScreenshot)) {throw '화면 이미지가 생성되지 않았습니다.'}
     $taskNewEvaluation=Get-Evaluation -Context $taskContext -Case $taskCase
     $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S01
+    $taskNewUser=@(Get-Users -Context $taskContext | Where-Object {$_.userId -eq 'U100'})[0]
+    if ($taskNewUser.name -ne '화면 등록 심사관' -or $taskNewUser.bureau -ne '화면 등록 심사국' -or $taskNewUser.division -ne '화면 등록 심사과') {throw '사용자 폼의 심사국·심사과가 저장되지 않았습니다.'}
+    $taskNewCase=@(Get-Cases -Context $taskContext -Period $taskPeriod -Scope Mine | Where-Object {$_.applicationNumber -eq '10-2026-0000456'})[0]
+    if ($taskNewCase.cpc -ne 'H04L 9/00' -or $taskNewCase.examinerBureau -ne '검증 심사국' -or $taskNewCase.examinerDivision -ne '검증 심사과') {throw '출원 화면의 CPC·소속 스냅샷이 저장되지 않았습니다.'}
     if ($taskNewDelivery.version -ne 3 -or $taskNewEvaluation.version -ne 2 -or $taskNewEvaluation.needsReconfirmation) {throw '화면의 임시저장·재납품·평가 저장이 반영되지 않았습니다.'}
     if ($null -eq $taskNewEvaluation.data.documentRatings[0].score -or $taskNewEvaluation.data.documentRatings[0].score -ne 0 -or $taskNewEvaluation.data.documentRatings[0].cited -ne $false) {throw '화면 평가 저장에서 0점 또는 X가 바뀌었습니다.'}
-    Write-Output 'PASS WPF runtime: load submission, draft save, republish, stale evaluation review, save evaluation, zero score, screenshot'
+    Write-Output 'PASS WPF runtime: user form bureau/division, CPC submission, failed-row input retention, draft/republish/evaluation, zero score, screenshot'
     Write-Output "Screenshot: $taskScreenshot"
 } finally {$taskProcess.Dispose()}

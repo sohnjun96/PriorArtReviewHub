@@ -60,6 +60,15 @@ function Set-WValue {
     else { $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force }
 }
 
+function Convert-WOptionalText {
+    param($Value, [string]$Label, [int]$MaximumLength = 100)
+    if ($null -eq $Value) { return '' }
+    if ($Value -isnot [string]) { throw "$Label 값은 문자열이어야 합니다." }
+    $text = $Value.Trim()
+    if ($text.Length -gt $MaximumLength) { throw "$Label 값은 최대 $MaximumLength 자까지 입력하십시오." }
+    return $text
+}
+
 function Get-WCurrentSid {
     return [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 }
@@ -109,6 +118,13 @@ function Convert-WRecord {
     param($Envelope, [string]$Path)
     if ($null -eq $Envelope) { return $null }
     $record = ConvertFrom-WJson (ConvertTo-Json -InputObject (Get-WValue $Envelope 'data') -Depth 60)
+    # New optional fields are projected at read time; immutable older JSON stays intact.
+    if ((Get-WValue $Envelope 'kind') -eq 'Users') {
+        foreach ($field in @('bureau','division')) { Set-WValue $record $field ([string](Get-WValue $record $field '')) }
+    }
+    if ((Get-WValue $Envelope 'kind') -eq 'Submission') {
+        foreach ($field in @('cpc','examinerBureau','examinerDivision')) { Set-WValue $record $field ([string](Get-WValue $record $field '')) }
+    }
     Set-WValue $record 'version' ([int]$Envelope.version)
     Set-WValue $record 'path' $Path
     return $record
@@ -156,7 +172,7 @@ function Get-Users {
     $user = Assert-WContext $Context
     $all = @(Get-WMasterRecords $Context.root 'Users')
     if (Test-WRole $user 'admin') { return $all }
-    if (Test-WRole $user 'ai') { return $all | Select-Object userId, name, active, version }
+    if (Test-WRole $user 'ai') { return $all | Select-Object userId, name, bureau, division, active, version }
     return $all | Where-Object { $_.userId -eq $user.userId }
 }
 
@@ -329,13 +345,17 @@ function Convert-WApplicationNumber {
 
 function New-Submission {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Period, [Parameter(Mandatory)][string]$ApplicationNumber,
-        [Parameter(Mandatory)][string]$RequestId, [string]$Reason = '')
+        [Parameter(Mandatory)][string]$RequestId, [string]$Reason = '', [string]$Cpc = '')
     $user = Assert-WContext $Context
     if (-not (Test-WRole $user 'examiner')) { throw '심사관 역할이 필요합니다.' }
     Assert-WPeriod $Period
     Assert-WId $RequestId '저장 요청 ID'
     $number = Convert-WApplicationNumber $ApplicationNumber
-    $fingerprint = Get-WFingerprint @{operation='NewSubmission';period=$Period;applicationNumber=$number;reason=$Reason;userId=$user.userId}
+    $cpcText = Convert-WOptionalText $Cpc 'CPC' 500
+    $requestData = @{operation='NewSubmission';period=$Period;applicationNumber=$number;reason=$Reason;userId=$user.userId}
+    # Omit blank CPC from the fingerprint so pre-CPC requests can still be retried.
+    if ($cpcText) { $requestData.cpc = $cpcText }
+    $fingerprint = Get-WFingerprint $requestData
     $lock = Join-Path $Context.root ('Locks\{0}\registration-{1}.lock' -f $Period, $user.userId)
     return Invoke-WPeriodReadLock $Context $Period {
       Invoke-FileLock -Path $lock -Action {
@@ -358,7 +378,8 @@ function New-Submission {
         if ($limit -gt 0 -and @($existing | Where-Object { $_.status -ne 'Cancelled' }).Count -ge $limit) { throw '월별 제출 건수 상한에 도달했습니다.' }
         $caseId = 'C' + [guid]::NewGuid().ToString('N')
         $data = [pscustomobject]@{ caseId = $caseId; period = $Period; groupId = $member.groupId; userId = $user.userId; examinerName = $user.name;
-            applicationNumber = $number; status = 'Submitted'; submittedAt = [datetimeoffset]::UtcNow.ToString('o'); duplicateWarning = $false; requestFingerprint=$fingerprint }
+            examinerBureau = [string](Get-WValue $user 'bureau' ''); examinerDivision = [string](Get-WValue $user 'division' '');
+            applicationNumber = $number; cpc = $cpcText; status = 'Submitted'; submittedAt = [datetimeoffset]::UtcNow.ToString('o'); duplicateWarning = $false; requestFingerprint=$fingerprint }
         # Cross-examiner duplicates are advisory; the per-user lock prevents duplicate registration by two own windows.
         $base = Join-Path $Context.root ('Data\{0}' -f $Period)
         if ([System.IO.Directory]::Exists($base)) {
@@ -401,7 +422,8 @@ function Cancel-Submission {
         Assert-WOpen (Get-Period $Context $actual.period) 'Submission'
         if ($actual.status -eq 'Cancelled') { throw '이미 취소된 제출 건입니다.' }
         $data = [pscustomobject]@{ caseId = $actual.caseId; period = $actual.period; groupId = $actual.groupId; userId = $actual.userId; examinerName = $actual.examinerName;
-            applicationNumber = $actual.applicationNumber; status = 'Cancelled'; submittedAt = $actual.submittedAt; cancelledAt = [datetimeoffset]::UtcNow.ToString('o'); cancellationReason = $Reason; requestFingerprint=$fingerprint }
+            examinerBureau = $actual.examinerBureau; examinerDivision = $actual.examinerDivision;
+            applicationNumber = $actual.applicationNumber; cpc = $actual.cpc; status = 'Cancelled'; submittedAt = $actual.submittedAt; cancelledAt = [datetimeoffset]::UtcNow.ToString('o'); cancellationReason = $Reason; requestFingerprint=$fingerprint }
         $saved = Write-Revision -Path $path -ExpectedVersion $ExpectedVersion -RequestId $RequestId -ActorId $user.userId -Reason $Reason -Data $data -Kind 'Submission' -TargetId $actual.caseId
         return Convert-WRecord $saved $path
       }
@@ -794,12 +816,17 @@ function Save-MasterRecord {
     Assert-WId $Id
     $clean = ConvertFrom-WJson (ConvertTo-Json -InputObject $Data -Depth 60)
     $clean = $clean | Select-Object * -ExcludeProperty version,path,requestFingerprint
-    Set-WValue $clean 'requestFingerprint' (Get-WFingerprint @{operation='SaveMasterRecord';type=$Type;id=$Id;data=$clean;expectedVersion=$ExpectedVersion;reason=$Reason})
     $idField = @{ Users = 'userId'; Groups = 'groupId'; Sources = 'sourceId' }[$Type]
     if ([string](Get-WValue $clean $idField) -ne $Id) { throw '마스터 ID와 저장 경로가 일치하지 않습니다.' }
     if ([string]::IsNullOrWhiteSpace([string](Get-WValue $clean 'name'))) { throw '이름을 입력하십시오.' }
     if ($null -ne (Get-WValue $clean 'active') -and (Get-WValue $clean 'active') -isnot [bool]) { throw 'active는 true 또는 false여야 합니다.' }
     if ($Type -eq 'Users') {
+        foreach ($field in @('bureau','division')) {
+            $fieldValue = $null
+            if ($null -ne $clean.PSObject.Properties[$field]) { $fieldValue = $clean.$field }
+            $label = @{bureau='심사국';division='심사과'}[$field]
+            Set-WValue $clean $field (Convert-WOptionalText -Value $fieldValue -Label $label)
+        }
         $roles = @((Get-WValue $clean 'roles' @()))
         foreach ($role in $roles) { if ($role -notin @('admin','examiner','ai')) { throw '사용자 역할이 올바르지 않습니다.' } }
         if (-not (Get-WValue $Context 'demoMode' $false) -and [string](Get-WValue $clean 'sid') -notmatch '^S-1-\d+(?:-\d+)+$') { throw 'Windows SID를 입력하십시오.' }
@@ -811,6 +838,7 @@ function Save-MasterRecord {
         if ($Id -eq $user.userId -and (-not [bool](Get-WValue $clean 'active' $true) -or $roles -notcontains 'admin')) { throw '현재 관리자는 본인의 관리자 권한을 해제하거나 비활성화할 수 없습니다.' }
     }
     if ($Type -eq 'Sources' -and [string](Get-WValue $clean 'type') -notin @('General','AI')) { throw '조사 방식 유형은 General 또는 AI여야 합니다.' }
+    Set-WValue $clean 'requestFingerprint' (Get-WFingerprint @{operation='SaveMasterRecord';type=$Type;id=$Id;data=$clean;expectedVersion=$ExpectedVersion;reason=$Reason})
     $path = Get-WMasterPath $Context.root $Type $Id
     $user = Assert-WAdmin $Context
     $saved = Write-Revision -Path $path -ExpectedVersion $ExpectedVersion -RequestId $RequestId -ActorId $user.userId -Reason $Reason -Data $clean -Kind $Type -TargetId $Id
@@ -883,9 +911,9 @@ function Initialize-Demo {
     }
     $sid = Get-WCurrentSid
     $records = @(
-        @{ type='Users'; id='U001'; data=@{userId='U001';sid=$sid;name='데모 관리자';roles=@('admin','examiner','ai');active=$true} },
-        @{ type='Users'; id='U002'; data=@{userId='U002';sid='DEMO-U002';name='데모 심사관';roles=@('examiner');active=$true} },
-        @{ type='Users'; id='U003'; data=@{userId='U003';sid='DEMO-U003';name='데모 클로드 담당자';roles=@('examiner','ai');active=$true} },
+        @{ type='Users'; id='U001'; data=@{userId='U001';sid=$sid;name='데모 관리자';bureau='';division='';roles=@('admin','examiner','ai');active=$true} },
+        @{ type='Users'; id='U002'; data=@{userId='U002';sid='DEMO-U002';name='데모 심사관';bureau='';division='';roles=@('examiner');active=$true} },
+        @{ type='Users'; id='U003'; data=@{userId='U003';sid='DEMO-U003';name='데모 클로드 담당자';bureau='';division='';roles=@('examiner','ai');active=$true} },
         @{ type='Groups'; id='G01'; data=@{groupId='G01';name='시범 그룹';active=$true} },
         @{ type='Sources'; id='S01'; data=@{sourceId='S01';name='선행기술조사';type='General';active=$true} },
         @{ type='Sources'; id='S02'; data=@{sourceId='S02';name='ChatGPT';type='AI';active=$true} },

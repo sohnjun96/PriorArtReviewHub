@@ -29,7 +29,7 @@ Invoke-FileLock -Path $initializationLock -TimeoutMilliseconds 10000 -Action {
         throw '비어 있는 새 폴더에만 초기화할 수 있습니다. 기존 파일을 덮어쓰지 않았습니다.'
     }
     $records = @(
-        @{ kind='Users'; id=$AdminId; data=[ordered]@{userId=$AdminId;sid=$AdminSid;name=$AdminName;roles=@('admin','examiner','ai');active=$true} },
+        @{ kind='Users'; id=$AdminId; data=[ordered]@{userId=$AdminId;sid=$AdminSid;name=$AdminName;bureau='';division='';roles=@('admin','examiner','ai');active=$true} },
         @{ kind='Groups'; id='G01'; data=[ordered]@{groupId='G01';name='운영 그룹';active=$true} },
         @{ kind='Sources'; id='S01'; data=[ordered]@{sourceId='S01';name='선행기술조사';type='General';active=$true} },
         @{ kind='Sources'; id='S02'; data=[ordered]@{sourceId='S02';name='ChatGPT';type='AI';active=$true} },

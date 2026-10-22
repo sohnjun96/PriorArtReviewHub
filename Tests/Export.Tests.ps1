@@ -28,6 +28,31 @@ function Open-ExportTestZip {
     return (New-Object IO.Compression.ZipArchive($stream, [IO.Compression.ZipArchiveMode]::Read, $false))
 }
 
+function Assert-ExportCaseFields {
+    param([System.IO.Compression.ZipArchive]$Archive, [string]$Bureau, [string]$Division, [string]$Cpc)
+    $expected = [ordered]@{ '심사국' = $Bureau; '심사과' = $Division; 'CPC' = $Cpc }
+    foreach ($sheetIndex in 1..4) {
+        [xml]$sheet = Read-ExportZipEntry $Archive ('xl/worksheets/sheet{0}.xml' -f $sheetIndex)
+        $sheetRows = @($sheet.GetElementsByTagName('row'))
+        Assert-ExportTest ($sheetRows.Count -gt 1) "Snapshot sheet $sheetIndex has data rows to verify."
+        $columnReferences = @{}
+        foreach ($cell in $sheetRows[0].GetElementsByTagName('c')) {
+            if ($expected.Contains($cell.InnerText)) { $columnReferences[$cell.InnerText] = $cell.GetAttribute('r') -replace '\d+$', '' }
+        }
+        foreach ($label in $expected.Keys) { Assert-ExportTest ($columnReferences.ContainsKey($label)) "Snapshot sheet $sheetIndex contains $label header." }
+        foreach ($row in @($sheetRows | Select-Object -Skip 1)) {
+            $cells = @{}
+            foreach ($cell in $row.GetElementsByTagName('c')) { $cells[$cell.GetAttribute('r')] = $cell }
+            foreach ($label in $expected.Keys) {
+                $reference = $columnReferences[$label] + $row.GetAttribute('r')
+                $cell = $cells[$reference]
+                Assert-ExportTest ($null -ne $cell -and $cell.InnerText -eq $expected[$label]) "Snapshot sheet $sheetIndex row $($row.GetAttribute('r')) preserves $label from the submitted case."
+                Assert-ExportTest ($cell.GetAttribute('t') -eq 'inlineStr') "Snapshot $label remains explicit text."
+            }
+        }
+    }
+}
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ('AiReviewExportTests-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($tempRoot)
 try {
@@ -93,19 +118,31 @@ try {
     Import-Module (Join-Path $PSScriptRoot '..\App\Modules\Workflow.psm1') -Force
     $storeRoot = Join-Path $tempRoot 'store'
     $adminContext = Initialize-Demo -Root $storeRoot
+    $examinerMaster = @(Get-Users -Context $adminContext | Where-Object { $_.userId -eq 'U002' })[0]
+    $examinerMaster | Add-Member -NotePropertyName bureau -NotePropertyValue '기계금속심사국' -Force
+    $examinerMaster | Add-Member -NotePropertyName division -NotePropertyValue '로봇자동화심사과' -Force
+    $null = Save-MasterRecord -Context $adminContext -Type Users -Id 'U002' -Data $examinerMaster -ExpectedVersion $examinerMaster.version -RequestId ([guid]::NewGuid().ToString('N'))
     $examinerContext = Get-Context -Root $storeRoot -UserId 'U002'
     $operatorContext = Get-Context -Root $storeRoot -UserId 'U003'
     $operationMonth = Get-Date -Format 'yyyy-MM'
-    $realCase = New-Submission -Context $examinerContext -Period $operationMonth -ApplicationNumber ('10-' + (Get-Date -Format 'yyyy') + '-0000001') -RequestId ([guid]::NewGuid().ToString('N'))
+    $realCase = New-Submission -Context $examinerContext -Period $operationMonth -ApplicationNumber ('10-' + (Get-Date -Format 'yyyy') + '-0000001') -Cpc 'G06F 16/00' -RequestId ([guid]::NewGuid().ToString('N'))
     $realAttachment = Import-DeliveryAttachment -Context $operatorContext -Case $realCase -SourceId 'S03' -Path $attachmentPath
     $realDelivery = Save-Delivery -Context $operatorContext -Case $realCase -SourceId 'S03' -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -Status Published -Documents @([pscustomobject]@{
         documentId = 'D001'; type = 'Patent'; identifier = '001122'; title = '=실제 납품'; description = '실제 모듈 연동'; attachments = @($realAttachment)
     })
     $null = Save-Evaluation -Context $examinerContext -Case $realCase -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -DeliveryVersions @{ S01 = 0; S02 = 0; S03 = $realDelivery.version } -DocumentRatings @([pscustomobject]@{ sourceId = 'S03'; documentId = 'D001'; score = 0; cited = $false; note = '=비고' })
+    $examinerMaster = @(Get-Users -Context $adminContext | Where-Object { $_.userId -eq 'U002' })[0]
+    $examinerMaster.bureau = '변경한 심사국'
+    $examinerMaster.division = '변경한 심사과'
+    $null = Save-MasterRecord -Context $adminContext -Type Users -Id 'U002' -Data $examinerMaster -ExpectedVersion $examinerMaster.version -RequestId ([guid]::NewGuid().ToString('N'))
+    $examinerContext = Get-Context -Root $storeRoot -UserId 'U002'
     $realOwnedExport = Export-ReviewSnapshot -Context $examinerContext -Period $operationMonth -Scope Mine -OutputDirectory $tempRoot -CaseId $realCase.caseId -IncludeAttachments
     Assert-ExportTest ($realOwnedExport.documentCount -eq 1 -and [IO.File]::Exists($realOwnedExport.bundlePath)) 'Real workflow owned-case XLSX/attachment ZIP export succeeds.'
     $zip = Open-ExportTestZip $realOwnedExport.workbookPath
-    try { Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('평가 중')) 'A partial evaluation is labelled as in progress.' }
+    try {
+        Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('평가 중')) 'A partial evaluation is labelled as in progress.'
+        Assert-ExportCaseFields -Archive $zip -Bureau '기계금속심사국' -Division '로봇자동화심사과' -Cpc 'G06F 16/00'
+    }
     finally { $zip.Dispose() }
     $realAssignedExport = Export-ReviewSnapshot -Context $operatorContext -Period $operationMonth -Scope Assigned -OutputDirectory $tempRoot -CaseId $realCase.caseId -IncludeAttachments
     Assert-ExportTest ($realAssignedExport.caseCount -eq 1 -and $realAssignedExport.documentCount -eq 1) 'Real assigned AI export succeeds without reading examiner evaluation.'
@@ -117,18 +154,26 @@ try {
     # Mock the workflow boundary to verify stable snapshot rows and version labels.
     $global:ExportFixtureAttachmentPath = $attachmentPath
     $global:ExportFixtureEmptyCases = $false
+    $global:ExportFixtureCaseFields = $false
     $global:ExportFixtureEvaluationReadCount = 0
     function global:Get-Cases {
         param($Context, $Period, $Scope)
         if ($global:ExportFixtureEmptyCases) { return }
-        return [pscustomobject]@{ caseId = 'C1'; period = $Period; groupId = 'G1'; userId = 'U1'; applicationNumber = '001234567890'; status = 'Submitted'; version = 1; path = ''; submittedAt = '2026-10-22T00:00:00Z'; examinerName = '심사관'; duplicateWarning = $true }
+        $record = [pscustomobject]@{ caseId = 'C1'; period = $Period; groupId = 'G1'; userId = 'U1'; applicationNumber = '001234567890'; status = 'Submitted'; version = 1; path = ''; submittedAt = '2026-10-22T00:00:00Z'; examinerName = '심사관'; duplicateWarning = $true }
+        if ($global:ExportFixtureCaseFields) {
+            $record | Add-Member -NotePropertyName examinerBureau -NotePropertyValue '=심사국'
+            $record | Add-Member -NotePropertyName examinerDivision -NotePropertyValue '  심사과  '
+            $record | Add-Member -NotePropertyName cpc -NotePropertyValue 'G06F 16/00'
+        }
+        return $record
     }
     function global:Get-Deliveries {
         param($Context, $Case)
-        return [pscustomobject]@{ version = 2; data = [pscustomobject]@{ sourceId = 'S02'; sourceName = 'ChatGPT'; noResults = $false; documents = @(
+        [pscustomobject]@{ version = 2; data = [pscustomobject]@{ sourceId = 'S02'; sourceName = 'ChatGPT'; noResults = $false; documents = @(
             [pscustomobject]@{ documentId = 'D1'; type = '특허'; identifier = '001122'; title = '=문헌'; description = '설명'; attachments = @([pscustomobject]@{ attachmentId = 'A1'; fileName = '문헌.txt'; relativePath = 'Data/a.txt' }) },
             [pscustomobject]@{ documentId = 'D2'; type = '논문'; identifier = 'doi:sample'; title = '미평가'; description = ''; attachments = @() }
         ) } }
+        [pscustomobject]@{ version = 1; data = [pscustomobject]@{ sourceId = 'S01'; sourceName = '선행기술조사'; noResults = $true; noResultsReason = '관련 문헌 없음'; documents = @() } }
     }
     function global:Get-Evaluation {
         param($Context, $Case)
@@ -156,6 +201,16 @@ try {
         Assert-ExportTest ($ratingXml.Contains('현재 납품에 없는 문헌') -and $ratingXml.Contains('필요')) 'Stale and removed-document evaluations remain visible.'
         [xml]$ratingSheet = $ratingXml
         Assert-ExportTest ($ratingSheet.GetElementsByTagName('row').Count -eq 4) 'Current, unreviewed, and removed-document ratings are included.'
+        Assert-ExportCaseFields -Archive $zip -Bureau '' -Division '' -Cpc ''
+    } finally { $zip.Dispose() }
+    $global:ExportFixtureCaseFields = $true
+    $populatedSnapshot = Export-ReviewSnapshot -Context $fixtureContext -Period '2026-10' -Scope Mine -OutputDirectory $tempRoot -CaseId 'C1'
+    $zip = Open-ExportTestZip $populatedSnapshot.workbookPath
+    try {
+        Assert-ExportCaseFields -Archive $zip -Bureau '=심사국' -Division '  심사과  ' -Cpc 'G06F 16/00'
+        [xml]$documentSheet = Read-ExportZipEntry $zip 'xl/worksheets/sheet2.xml'
+        Assert-ExportTest ($documentSheet.DocumentElement.InnerText.Contains('결과 없음')) 'No-results rows are included when checking the case fields.'
+        Assert-ExportTest ($documentSheet.GetElementsByTagName('f').Count -eq 0) 'Organization fields cannot turn into Excel formulas.'
     } finally { $zip.Dispose() }
     Assert-ExportThrows { Export-ReviewSnapshot -Context $fixtureContext -Period '2026-10' -Scope Mine -OutputDirectory $tempRoot -CaseId 'not-authorized' } 'Case filter cannot bypass the authorized case list.'
     $global:ExportFixtureEmptyCases = $true
@@ -177,6 +232,7 @@ try {
     }
     Remove-Variable -Name ExportFixtureAttachmentPath -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ExportFixtureEmptyCases -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable -Name ExportFixtureCaseFields -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable -Name ExportFixtureEvaluationReadCount -Scope Global -ErrorAction SilentlyContinue
     $resolvedTemp = [IO.Path]::GetFullPath($tempRoot)
     $expectedRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\') + '\'

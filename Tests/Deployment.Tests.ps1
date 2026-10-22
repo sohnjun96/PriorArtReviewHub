@@ -53,6 +53,7 @@ try {
     }
     Test-DeploymentCase 'Release contains exact modules, XAML and version-specific launchers' {
         $release = & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $deploymentPath -DataRoot $storePath
+        Assert-Deployment ($release.version -eq '0.1.2') 'default release version'
         foreach ($relative in @('Start.ps1', 'Modules/Storage.psm1', 'Modules/Workflow.psm1', 'Modules/Export.psm1', 'Views/Main.xaml')) {
             $sourceFile = Join-Path (Join-Path $projectPath 'App') $relative
             $copiedFile = Join-Path $release.release $relative
@@ -60,7 +61,7 @@ try {
             Assert-Deployment ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $copiedFile -Algorithm SHA256).Hash) "identical copy $relative"
         }
         $launchText = [IO.File]::ReadAllText((Join-Path $deploymentPath 'Launch.ps1'))
-        Assert-Deployment ($launchText.Contains('App\releases\0.1.1\Start.ps1')) 'launcher pins exact release'
+        Assert-Deployment ($launchText.Contains('App\releases\0.1.2\Start.ps1')) 'launcher pins exact release'
         Assert-Deployment ($launchText.Contains($storePath.Replace("'", "''"))) 'launcher pins production data root'
         $commandText = [IO.File]::ReadAllText((Join-Path $deploymentPath '실행.cmd'))
         Assert-Deployment ($commandText.Contains('-STA') -and $commandText.Contains('Launch.ps1') -and $commandText -match '(?i)-ExecutionPolicy\s+RemoteSigned' -and $commandText -notmatch '(?i)-ExecutionPolicy\s+Bypass') 'STA launcher uses process RemoteSigned without Bypass'

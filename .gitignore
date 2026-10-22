@@ -1,0 +1,5 @@
+DemoData/
+TestResults/
+*.tmp
+*.log
+운영실행.cmd

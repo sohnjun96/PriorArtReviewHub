@@ -1,0 +1,5 @@
+@echo off
+setlocal
+rem Copy to 운영실행.cmd and replace the UNC path with the approved server path.
+powershell.exe -NoLogo -NoProfile -STA -File "%~dp0App\Start.ps1" -DataRoot "\\FILESERVER\AIReview"
+if errorlevel 1 pause

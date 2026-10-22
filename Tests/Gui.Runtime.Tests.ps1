@@ -27,10 +27,11 @@ if ($null -eq $taskEvaluation.data.documentRatings[0].score -or $taskEvaluation.
 $taskOutput=Join-Path $taskProject 'TestResults'
 [void][IO.Directory]::CreateDirectory($taskOutput)
 $taskScreenshot=Join-Path $taskOutput 'Gui.Smoke.png'
+$taskAdminReport=Join-Path $taskOutput 'Gui.AdminMode.json'
 $taskStart=Join-Path $taskProject 'App\Start.ps1'
 $taskProcessInfo=New-Object Diagnostics.ProcessStartInfo
 $taskProcessInfo.FileName='powershell.exe'
-$taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -DataRoot "{1}" -SmokeTest -ExerciseUiWrites -ScreenshotPath "{2}"' -f $taskStart,$taskRoot,$taskScreenshot)
+$taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -AdminMode -DataRoot "{1}" -SmokeTest -ExerciseUiWrites -ScreenshotPath "{2}" -SmokeReportPath "{3}"' -f $taskStart,$taskRoot,$taskScreenshot,$taskAdminReport)
 $taskProcessInfo.UseShellExecute=$false
 $taskProcessInfo.CreateNoWindow=$true
 $taskProcessInfo.RedirectStandardOutput=$true
@@ -40,6 +41,8 @@ try {
     if (-not $taskProcess.WaitForExit(45000)) {$taskProcess.Kill();throw 'WPF 화면 검증이 45초 안에 완료되지 않았습니다.'}
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     if (-not [IO.File]::Exists($taskScreenshot)) {throw '화면 이미지가 생성되지 않았습니다.'}
+    $taskAdminSession=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskAdminReport))
+    if ($taskAdminSession.launchMode -ne 'Admin' -or $taskAdminSession.accessMode -ne 'Admin' -or -not $taskAdminSession.adminVisible -or $taskAdminSession.loginDialogShown) {throw '관리자용 실행이 사용자 선택 없이 관리자 화면으로 진입하지 않았습니다.'}
     $taskNewEvaluation=Get-Evaluation -Context $taskContext -Case $taskCase
     $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S01
     $taskNewUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '화면 등록 심사관'})[0]
@@ -53,7 +56,7 @@ try {
         if ($taskNumberOnly.Count -ne 1 -or $taskNumberOnly[0].title) {throw '출원번호만 입력한 AI 검색 결과가 저장되지 않았습니다.'}
     }
     if ($null -eq $taskNewEvaluation.data.documentRatings[0].score -or $taskNewEvaluation.data.documentRatings[0].score -ne 0 -or $taskNewEvaluation.data.documentRatings[0].cited -ne $false) {throw '화면 평가 저장에서 0점 또는 X가 바뀌었습니다.'}
-    Write-Output 'PASS WPF runtime: selection login, automatic user IDs, bureau/division, CPC, number-only AI results, failed-row retention, evaluation, zero score, screenshot'
+    Write-Output 'PASS WPF admin mode: direct login without selector, automatic user IDs, CPC, number-only AI results, evaluation, zero score, screenshot'
     Write-Output "Screenshot: $taskScreenshot"
 } finally {$taskProcess.Dispose()}
 
@@ -69,6 +72,20 @@ try {
     if (-not $taskProcess.WaitForExit(45000)) {$taskProcess.Kill();throw '두 번째 사용자 선택 화면 검증이 완료되지 않았습니다.'}
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskOtherReport))
-    if ($taskReport.userId -ne 'U002' -or $taskReport.adminVisible -or $taskOtherCase.caseId -notin $taskReport.caseIds -or $taskCase.caseId -in $taskReport.caseIds) {throw '첫 화면에서 선택한 심사관의 목록으로 전환되지 않았습니다.'}
-    Write-Output 'PASS WPF selection: two examiner identities on one PC show their own cases; admin controls hidden for examiner'
+    if ($taskReport.userId -ne 'U002' -or $taskReport.adminVisible -or $taskOtherCase.caseId -notin $taskReport.caseIds -or $taskCase.caseId -in $taskReport.caseIds -or $taskReport.launchMode -ne 'User' -or $taskReport.accessMode -ne 'User' -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 본인 선택과 업무 범위가 적용되지 않았습니다.'}
+    Write-Output 'PASS WPF user mode: examiner selection shows own cases and hides admin controls'
+} finally {$taskProcess.Dispose()}
+
+# Selecting a user who holds both roles through the user launcher must still
+# remain ordinary mode. The admin launcher is the only UI entry for admin work.
+$taskRestrictedReport=Join-Path $taskOutput 'Gui.DualRoleUser.json'
+$taskRestrictedScreenshot=Join-Path $taskOutput 'Gui.DualRoleUser.png'
+$taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -DataRoot "{1}" -SmokeTest -SmokeLoginUserId U001 -SmokeReportPath "{2}" -ScreenshotPath "{3}"' -f $taskStart,$taskRoot,$taskRestrictedReport,$taskRestrictedScreenshot)
+$taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
+try {
+    if (-not $taskProcess.WaitForExit(45000)) {$taskProcess.Kill();throw '중복 역할 일반사용자 화면 검증이 완료되지 않았습니다.'}
+    if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
+    $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskRestrictedReport))
+    if ($taskReport.userId -ne 'U001' -or $taskReport.adminVisible -or $taskReport.accessMode -ne 'User' -or 'All' -in $taskReport.scopeIds -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 관리자 역할이 활성화되었습니다.'}
+    Write-Output 'PASS WPF user mode: selecting an admin/examiner account does not enable administrator menus or full-scope access'
 } finally {$taskProcess.Dispose()}

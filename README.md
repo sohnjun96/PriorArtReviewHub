@@ -1,12 +1,20 @@
-﻿# Prior Art Review Hub 0.1.3
+﻿# Prior Art Review Hub 0.1.4
 
 Windows PowerShell 5.1 또는 Windows용 PowerShell 7의 WPF 프로그램입니다. 공유폴더의 JSON이 원본이며 Excel 설치 없이 `.xlsx`와 첨부 ZIP을 만듭니다. AI 검색을 직접 실행하는 도구가 아니라, 대상건 선정·AI 검색 결과 입력·평가를 관리하는 도구입니다.
 
-최신 배포본: [AIReview-0.1.3.zip](dist/AIReview-0.1.3.zip).
+최신 배포본: [AIReview-0.1.4.zip](dist/AIReview-0.1.4.zip).
 
 ## 로컬 시연
 
-`실행.cmd`를 실행하거나 다음 명령을 사용합니다. 시연 관리자와 가상 참여자가 `DemoData`에 생성되며, 첫 화면의 **심사과 - 이름** 목록에서 사용자를 선택해 로그인합니다. 실제 출원정보는 시연 저장소에 넣지 마세요.
+용도에 맞는 CMD 파일을 실행합니다. 시연 관리자와 가상 참여자가 `DemoData`에 생성됩니다.
+
+| 실행 파일 | 로그인 방식 |
+|---|---|
+| `관리자용.cmd` | 사용자 선택이나 비밀번호 없이 관리자 화면으로 바로 진입 |
+| `일반사용자용.cmd` | 첫 화면의 **심사과 - 이름** 목록에서 본인을 선택 |
+| `실행.cmd` | `일반사용자용.cmd`와 동일 |
+
+소스 폴더의 CMD 파일은 로컬 시연 저장소인 `DemoData`를 사용합니다. 실제 출원정보는 시연 저장소에 넣지 마세요. 직접 실행할 때는 다음과 같습니다. 관리자 모드는 명령 끝에 `-AdminMode`를 추가합니다.
 
 ```powershell
 powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\App\Start.ps1 -Demo
@@ -21,10 +29,14 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Tools\Initialize
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Tools\Publish-Release.ps1 -Destination '\\FILESERVER\AIReview\Program' -DataRoot '\\FILESERVER\AIReview\Store'
 ```
 
-사용자는 배포 폴더의 `실행.cmd`를 실행합니다. `Launch.ps1`은 `App\releases\0.1.3`의 프로그램과 지정한 공용 저장소를 사용합니다. 직접 실행할 때는 다음과 같습니다.
+배포 폴더에는 `관리자용.cmd`, `일반사용자용.cmd`, `실행.cmd`가 함께 생성됩니다. 관리자는 `관리자용.cmd`, 심사관·AI 담당자는 `일반사용자용.cmd`를 실행합니다. 두 실행 방식은 `Launch.ps1`을 통해 `App\releases\0.1.4`의 같은 프로그램과 위에서 지정한 **같은 공용 저장소**를 사용합니다. `실행.cmd`는 일반사용자용 실행 진입점입니다. 관리자 실행은 Windows의 **관리자 권한으로 실행**이나 UAC 승격을 요구하지 않습니다.
+
+초기화에서 만든 관리자 계정으로 관리자 화면에 바로 진입하며, 활성 관리자 계정이 없으면 안내 메시지를 표시하고 종료합니다. 새 저장소에서는 위의 초기화 명령으로 첫 관리자를 생성합니다. 직접 실행할 때는 다음과 같습니다.
 
 ```powershell
 powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\App\Start.ps1 -DataRoot '\\FILESERVER\AIReview\Store'
+# 관리자 화면으로 바로 실행:
+powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\App\Start.ps1 -DataRoot '\\FILESERVER\AIReview\Store' -AdminMode
 ```
 
 실행 파일은 해당 PowerShell 프로세스에만 `RemoteSigned`를 적용하며 PC의 영구 실행 정책을 변경하지 않습니다. 기관의 `MachinePolicy`·`UserPolicy`와 스크립트 서명 기준은 계속 우선합니다. 배포 스크립트는 기존 버전과 실행 진입점을 덮어쓰지 않으므로 업데이트 때는 새 배포 폴더에서 검증한 뒤 바로가기를 전환합니다. 초기화가 중간 실패하면 기록을 보존하고 새 빈 폴더에 초기화하세요.
@@ -53,7 +65,9 @@ powershell.exe -NoProfile -Command "Get-ExecutionPolicy -List"
 
 관리자로 로그인한 뒤 **운영 관리 → 사용자 → 신규 사용자**에서 **성명·심사국·심사과·역할·활성 여부**를 입력하고 **설정 저장**을 누릅니다. 사용자 ID와 내부 식별값은 자동으로 부여됩니다. 기존 사용자는 사용자 목록에서 선택해 불러온 뒤 수정합니다. 심사국과 심사과는 비워 둘 수 있습니다.
 
-모든 사용자는 프로그램을 켰을 때 첫 화면의 **심사과 - 이름** 목록에서 본인을 선택해 로그인합니다. 같은 PC에서도 서로 다른 사용자를 선택할 수 있습니다. 이 선택은 업무 작성자를 정하는 간편 로그인이며 Windows 계정 인증과 연결하지 않습니다. 활성 사용자만 목록에 표시하고, 메뉴와 업무 범위는 선택한 사용자의 역할·월별 배정에 따라 정합니다.
+관리자는 **관리자용.cmd**를 실행하면 사용자 선택이나 비밀번호 없이 관리자 화면에 바로 진입합니다. 심사관·AI 담당자는 **일반사용자용.cmd** 또는 **실행.cmd**를 실행한 뒤 첫 화면의 **심사과 - 이름** 목록에서 본인을 선택합니다. 같은 PC에서도 서로 다른 사용자를 선택할 수 있습니다. 이 선택은 업무 작성자를 정하는 간편 로그인이며 Windows 계정 인증과 연결하지 않습니다.
+
+일반사용자용 로그인에는 활성 심사관·AI 담당자를 표시하고, 메뉴와 업무 범위는 선택한 사용자의 역할·월별 배정에 따라 정합니다. 관리자와 심사관 역할을 함께 가진 사용자를 선택해도 일반사용자용 실행에서는 관리자 메뉴를 제공하지 않습니다. 관리자 역할만 가진 사용자는 일반사용자용 로그인 목록에 표시하지 않습니다.
 
 역할은 `admin`, `examiner`, `ai`를 중복 부여할 수 있습니다. 전출자는 삭제 대신 비활성화하여 과거 기록을 보존합니다. 이전 버전의 사용자 ID와 SID도 그대로 유지하므로 기존 사용자·납품·평가 연결을 다시 만들 필요가 없습니다.
 

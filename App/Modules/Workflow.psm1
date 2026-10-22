@@ -136,6 +136,20 @@ function Get-WMasterRecords {
     }
 }
 
+function Convert-WAccessUser {
+    param($User, [ValidateSet('User','Admin','Unrestricted')][string]$AccessMode = 'Unrestricted')
+    # Session roles come from both the current user record and the launcher mode.
+    # Clone the record so a normal login never edits the stored administrator roles.
+    $copy = ConvertFrom-WJson (ConvertTo-Json -InputObject $User -Depth 60)
+    if ($AccessMode -eq 'User') {
+        if (-not ((Test-WRole $copy 'examiner') -or (Test-WRole $copy 'ai'))) { throw '일반 사용자로 로그인하려면 심사관 또는 AI 담당자 역할이 필요합니다.' }
+        Set-WValue $copy 'roles' @((Get-WValue $copy 'roles' @()) | Where-Object { $_ -ne 'admin' })
+    } elseif ($AccessMode -eq 'Admin' -and -not (Test-WRole $copy 'admin')) {
+        throw '활성 총괄관리자 계정을 찾을 수 없습니다. 관리자 계정과 역할을 확인하십시오.'
+    }
+    return $copy
+}
+
 function Assert-WContext {
     param($Context)
     $root = [System.IO.Path]::GetFullPath([string](Get-WValue $Context 'root'))
@@ -143,9 +157,10 @@ function Assert-WContext {
     Assert-WId $userId '사용자 ID'
     $record = Read-Revision -Path (Get-WMasterPath $root 'Users' $userId)
     if ($null -eq $record -or -not [bool](Get-WValue $record.data 'active' $true)) { throw '활성 사용자 등록을 확인할 수 없습니다.' }
-    # This shared-folder tool deliberately uses a user selector for sign-in.
     # Refresh activity and roles on every operation without tying users to PCs.
-    return $record.data
+    # A general-user launcher cannot recover admin rights from a refreshed record.
+    $accessMode = [string](Get-WValue $Context 'accessMode' 'Unrestricted')
+    return Convert-WAccessUser -User $record.data -AccessMode $accessMode
 }
 
 function Test-WRole {
@@ -205,11 +220,13 @@ function Get-Periods {
 }
 
 function Get-LoginUsers {
-    param([Parameter(Mandatory)][string]$Root)
+    param([Parameter(Mandatory)][string]$Root, [ValidateSet('User','Admin','All')][string]$AccessMode = 'All')
     $resolved = [System.IO.Path]::GetFullPath($Root)
     $entries = @(
         foreach ($record in @(Get-WMasterRecords $resolved 'Users')) {
             if (-not [bool](Get-WValue $record 'active' $true)) { continue }
+            if ($AccessMode -eq 'User' -and -not ((Test-WRole $record 'examiner') -or (Test-WRole $record 'ai'))) { continue }
+            if ($AccessMode -eq 'Admin' -and -not (Test-WRole $record 'admin')) { continue }
             $division = [string](Get-WValue $record 'division' '')
             if ([string]::IsNullOrWhiteSpace($division)) { $division = '미지정' }
             [pscustomobject]@{ userId = $record.userId; name = $record.name; bureau = [string](Get-WValue $record 'bureau' '');
@@ -239,17 +256,24 @@ function Get-LoginUsers {
 }
 
 function Get-Context {
-    param([Parameter(Mandatory)][string]$Root, [string]$UserId)
+    param([Parameter(Mandatory)][string]$Root, [string]$UserId,
+        [ValidateSet('User','Admin','Unrestricted')][string]$AccessMode = 'Unrestricted')
     $resolved = [System.IO.Path]::GetFullPath($Root)
     $demo = [System.IO.File]::Exists((Join-Path $resolved '.demo-mode.json'))
     $users = @(Get-WMasterRecords $resolved 'Users' | Where-Object { [bool](Get-WValue $_ 'active' $true) })
     if ($UserId) { $matches = @($users | Where-Object { $_.userId -eq $UserId -and (Get-WValue $_ 'active' $true) }) }
+    elseif ($AccessMode -eq 'Admin') { $matches = @($users | Where-Object { Test-WRole $_ 'admin' } | Sort-Object userId | Select-Object -First 1) }
+    elseif ($AccessMode -eq 'User') { $matches = @($users | Where-Object { (Test-WRole $_ 'examiner') -or (Test-WRole $_ 'ai') } | Sort-Object userId | Select-Object -First 1) }
     else {
-        # Script/backwards-compatible default. The GUI always shows the selector.
+        # Backwards-compatible default for existing setup and maintenance scripts.
         $matches = @($users | Sort-Object @{Expression={ if (Test-WRole $_ 'admin') { 0 } else { 1 } }}, userId | Select-Object -First 1)
     }
-    if ($matches.Count -ne 1) { throw '선택한 활성 사용자를 찾을 수 없습니다. 관리자에게 사용자 등록을 요청하십시오.' }
-    $context = [pscustomobject]@{ root = $resolved; user = $matches[0]; demoMode = $demo; demoImpersonation = [bool]$UserId; periods = @() }
+    if ($matches.Count -ne 1) {
+        if ($AccessMode -eq 'Admin') { throw '활성 총괄관리자 계정을 찾을 수 없습니다. 관리자 계정과 역할을 확인하십시오.' }
+        throw '선택한 활성 사용자를 찾을 수 없습니다. 관리자에게 사용자 등록을 요청하십시오.'
+    }
+    $sessionUser = Convert-WAccessUser -User $matches[0] -AccessMode $AccessMode
+    $context = [pscustomobject]@{ root = $resolved; user = $sessionUser; accessMode = $AccessMode; demoMode = $demo; demoImpersonation = [bool]$UserId; periods = @() }
     $context.periods = @(Get-Periods -Context $context)
     return $context
 }

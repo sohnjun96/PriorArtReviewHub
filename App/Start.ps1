@@ -1,6 +1,7 @@
 ﻿param(
     [string]$DataRoot,
     [switch]$Demo,
+    [switch]$AdminMode,
     [switch]$SmokeTest,
     [switch]$ExerciseUiWrites,
     [string]$ScreenshotPath,
@@ -19,6 +20,8 @@ if (-not $DataRoot) {
 }
 $DataRoot = [IO.Path]::GetFullPath($DataRoot)
 if ($Demo) { Initialize-Demo -Root $DataRoot | Out-Null }
+$script:launchMode=if ($AdminMode) {'Admin'} else {'User'}
+$script:loginDialogShown=$false
 function Write-UiImage($Window,[string]$Path) {
     if (-not $Path) {return}
     $Window.UpdateLayout()
@@ -29,6 +32,7 @@ function Write-UiImage($Window,[string]$Path) {
     $stream=[IO.File]::Create($Path);try {$encoder.Save($stream)} finally {$stream.Dispose()}
 }
 function Show-LoginDialog($Owner=$null) {
+    $script:loginDialogShown=$true
     $loginReader=[Xml.XmlReader]::Create((Join-Path $appDirectory 'Views\Login.xaml'))
     try {$loginWindow=[Windows.Markup.XamlReader]::Load($loginReader)} finally {$loginReader.Close()}
     if ($Owner) {$loginWindow.Owner=$Owner;$loginWindow.WindowStartupLocation='CenterOwner'}
@@ -40,14 +44,14 @@ function Show-LoginDialog($Owner=$null) {
         $login.LoginStatusText.Text="활성 사용자 $($login.users.Count)명 · 본인을 선택하고 로그인하세요."
     }.GetNewClosure()
     $login.reload={
-        try {$login.users=@(& $login.listCommand -Root $login.root);& $login.filter}
+        try {$login.users=@(& $login.listCommand -Root $login.root -AccessMode User);& $login.filter}
         catch {$login.LoginStatusText.Text=$_.Exception.Message}
     }.GetNewClosure()
     $login.LoginSearchBox.Add_TextChanged({& $login.filter}.GetNewClosure())
     $login.LoginRefreshButton.Add_Click({& $login.reload}.GetNewClosure())
     $login.LoginButton.Add_Click({
         if (-not $login.LoginUsersList.SelectedItem) {$login.LoginStatusText.Text='목록에서 본인을 선택하세요.';return}
-        try {$login.context=& $login.contextCommand -Root $login.root -UserId $login.LoginUsersList.SelectedItem.userId;$login.window.DialogResult=$true}
+        try {$login.context=& $login.contextCommand -Root $login.root -UserId $login.LoginUsersList.SelectedItem.userId -AccessMode User;$login.window.DialogResult=$true}
         catch {$login.LoginStatusText.Text=$_.Exception.Message;if ($login.smoke) {$login.error=$_.Exception.Message;$login.window.Close()}}
     }.GetNewClosure())
     $login.LoginUsersList.Add_MouseDoubleClick({if ($login.LoginUsersList.SelectedItem) {$login.LoginButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))}}.GetNewClosure())
@@ -68,7 +72,7 @@ function Show-LoginDialog($Owner=$null) {
     if ($login.error) {throw $login.error}
     return $login.context
 }
-$script:context = Show-LoginDialog
+$script:context=if ($AdminMode) {Get-Context -Root $DataRoot -AccessMode Admin} else {Show-LoginDialog}
 if (-not $script:context) {return}
 $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'Views\Main.xaml'))
 try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
@@ -186,7 +190,8 @@ function Get-UiValue($Object,[string]$Name,$Default='') {
 }
 function Set-Identity {
     $affiliation=@((Get-UiValue $context.User 'bureau'),(Get-UiValue $context.User 'division')) | Where-Object {$_}
-    $ui.IdentityText.Text=(@($context.User.name,($affiliation -join ' / ')) | Where-Object {$_}) -join ' · '
+    $modeLabel=if ($AdminMode) {'관리자'} else {'일반 사용자'}
+    $ui.IdentityText.Text=(@($modeLabel,$context.User.name,($affiliation -join ' / ')) | Where-Object {$_}) -join ' · '
 }
 function Add-SubmissionInputRows([bool]$IncludeSingle=$true,[bool]$IncludePaste=$true) {
     $pending=@()
@@ -473,7 +478,9 @@ function Export-Current([bool]$IncludeAttachments,[string]$CaseId='') {
 function Set-SessionControls {
     $script:changing=$true
     Set-Identity
-    $ui.ModeText.Text=if ($Demo) {'로컬 시연 · 사용자 선택 로그인'} else {"공유 저장소 · $DataRoot"}
+    $modeLabel=if ($AdminMode) {'관리자용 실행'} else {'일반사용자용 실행'}
+    $ui.ModeText.Text=if ($Demo) {"로컬 시연 · $modeLabel"} else {"$modeLabel · $DataRoot"}
+    $ui.SwitchUserButton.Visibility=if ($AdminMode) {'Collapsed'} else {'Visible'}
     $ui.AdminTab.Visibility=if ('Admin' -in $context.User.roles) {'Visible'} else {'Collapsed'}
     $scopes=@([pscustomobject]@{id='Mine';name='내 대상건 · 검색 결과 · 평가'})
     if ('AI' -in $context.User.roles) {$scopes += [pscustomobject]@{id='Assigned';name='담당 그룹 대상건'}}
@@ -485,7 +492,7 @@ function Set-SessionControls {
     $ui.AdminIdBox.Clear();$ui.AdminJsonBox.Text='{}';Set-UserForm $null
     Refresh-AdminUserList
     Update-AdminEditor
-    $ui.MainTabs.SelectedItem=$ui.TargetSelectionTab;$ui.TargetTabs.SelectedIndex=0
+    $ui.MainTabs.SelectedItem=if ($AdminMode) {$ui.AdminTab} else {$ui.TargetSelectionTab};$ui.TargetTabs.SelectedIndex=0
     $script:requests=@{};$script:adminDirty=$false;$script:changing=$false
 }
 Set-SessionControls
@@ -677,7 +684,7 @@ $ui.AdminSaveButton.Add_Click({Invoke-UiAction {
             $ui.AdminJsonBox.Text=ConvertTo-Json -InputObject ($saved | Select-Object * -ExcludeProperty version,path,displayName) -Depth 40
             Refresh-AdminUserList $script:adminLoadedId;Update-AdminEditor
         }
-        if ($script:adminLoadedKind -eq 'Users' -and $script:adminLoadedId -eq $context.User.userId) {$script:context=Get-Context -Root $context.Root -UserId $context.User.userId;Set-Identity}
+        if ($script:adminLoadedKind -eq 'Users' -and $script:adminLoadedId -eq $context.User.userId) {$script:context=Get-Context -Root $context.Root -UserId $context.User.userId -AccessMode $script:launchMode;Set-Identity}
         $script:adminDirty=$false;$script:changing=$false
         Set-Status "설정 $script:adminVersion 판 저장 완료. 새 운영월은 프로그램을 다시 실행하면 목록에 표시됩니다."
     }
@@ -764,7 +771,7 @@ if ($SmokeTest) {
         if ($ExerciseUiWrites) {$ui.MainTabs.SelectedItem=$ui.EvaluationTab}
         Save-TestScreenshot
         if ($SmokeReportPath) {
-            $report=[pscustomobject]@{userId=$context.User.userId;caseIds=@($script:cases | ForEach-Object {$_.caseId});menus=@($ui.MainTabs.Items | ForEach-Object {$_.Header});evaluationColumns=@($ui.RatingsGrid.Columns | ForEach-Object {$_.Header});adminVisible=($ui.AdminTab.Visibility -eq 'Visible')}
+            $report=[pscustomobject]@{userId=$context.User.userId;caseIds=@($script:cases | ForEach-Object {$_.caseId});menus=@($ui.MainTabs.Items | ForEach-Object {$_.Header});evaluationColumns=@($ui.RatingsGrid.Columns | ForEach-Object {$_.Header});adminVisible=($ui.AdminTab.Visibility -eq 'Visible');launchMode=$script:launchMode;accessMode=$context.accessMode;loginDialogShown=[bool]$script:loginDialogShown;scopeIds=@($ui.ScopeCombo.ItemsSource | ForEach-Object {$_.id})}
             [IO.File]::WriteAllText($SmokeReportPath,(ConvertTo-Json -InputObject $report -Depth 10),(New-Object Text.UTF8Encoding($false)))
         }
         $script:submissionRows.Clear();$ui.ApplicationNumberBox.Clear();$ui.CpcBox.Clear();$ui.SubmissionBox.Clear()

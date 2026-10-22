@@ -374,6 +374,64 @@ try {
         } finally {[IO.File]::Move($renamed,$marker)}
     }
 
+    Test-Case 'launcher access modes separate general-user and automatic administrator login in production' {
+        $modeRoot=Join-Path $testRoot 'LauncherModes'
+        $setup=Initialize-Demo -Root $modeRoot
+        [IO.File]::Move((Join-Path $modeRoot '.demo-mode.json'),(Join-Path $modeRoot '.demo-mode.disabled'))
+        $onlyAdmin=New-User -Context $setup -Name '관리 전용' -Roles @('admin') -RequestId (New-Request)
+        $inactiveAdmin=New-User -Context $setup -Name '비활성 관리자' -Roles @('admin') -Active $false -RequestId (New-Request)
+        $adminSession=Get-Context -Root $modeRoot -AccessMode Admin
+        $normalSession=Get-Context -Root $modeRoot -UserId U001 -AccessMode User
+        $peer=Get-Context -Root $modeRoot -UserId U002 -AccessMode User
+        Assert-True ($adminSession.accessMode -eq 'Admin' -and $adminSession.user.userId -eq 'U001' -and $adminSession.user.roles -contains 'admin') 'admin launcher chooses the first active admin without a selector'
+        Assert-True ((Get-Context -Root $modeRoot -AccessMode Admin).user.userId -eq $adminSession.user.userId) 'automatic admin selection stays stable across reads'
+        Assert-True ($normalSession.accessMode -eq 'User' -and -not $normalSession.demoMode -and $normalSession.user.roles -notcontains 'admin') 'normal production session hides admin UI roles even for a multi-role administrator'
+        Assert-True ($normalSession.user.roles -contains 'examiner' -and $normalSession.user.roles -contains 'ai') 'normal session retains ordinary work roles'
+        $normalChoices=@(Get-LoginUsers -Root $modeRoot -AccessMode User)
+        $adminChoices=@(Get-LoginUsers -Root $modeRoot -AccessMode Admin)
+        Assert-True (@($normalChoices | Where-Object {$_.userId -eq 'U001'}).Count -eq 1 -and @($normalChoices | Where-Object {$_.userId -eq $onlyAdmin.userId}).Count -eq 0) 'general-user choices include working administrators and exclude admin-only accounts'
+        Assert-True (@($adminChoices | Where-Object {$_.userId -eq 'U002' -or $_.userId -eq $inactiveAdmin.userId}).Count -eq 0 -and $adminChoices.Count -eq 2) 'admin choices contain active administrators only'
+        Assert-Throws {Get-Context -Root $modeRoot -UserId $onlyAdmin.userId -AccessMode User} '일반 사용자'
+        Assert-Throws {Get-Context -Root $modeRoot -UserId U002 -AccessMode Admin} '총괄관리자'
+        $ownCase=New-Submission -Context $normalSession -Period $month -ApplicationNumber '10-2026-0000151' -RequestId (New-Request)
+        $peerCase=New-Submission -Context $peer -Period $month -ApplicationNumber '10-2026-0000152' -RequestId (New-Request)
+        Assert-True (@(Get-Cases -Context $normalSession -Period $month -Scope Mine).Count -eq 1) 'normal session can submit and list its own work'
+        Assert-True (@(Get-Cases -Context $adminSession -Period $month -Scope All).Count -eq 2) 'admin mode can inspect all work'
+        Assert-Throws {Get-Cases -Context $normalSession -Period $month -Scope All} '관리자'
+        Assert-Throws {Save-MasterRecord -Context $normalSession -Type Groups -Id G02 -Data @{groupId='G02';name='일반 실행 차단';active=$true} -ExpectedVersion 0 -RequestId (New-Request)} '관리자'
+        Assert-Throws {New-User -Context $normalSession -Name '일반 실행 차단' -RequestId (New-Request)} '관리자'
+        Assert-Throws {Set-PeriodStatus -Context $normalSession -Period $month -Status Closed -ExpectedVersion 1 -RequestId (New-Request) -Reason '일반 실행 차단'} '관리자'
+        Assert-Throws {Save-Period -Context $normalSession -Period $month -Data (Get-Period $normalSession $month) -ExpectedVersion 1 -RequestId (New-Request)} '관리자'
+        Assert-Throws {Save-Delivery -Context $normalSession -Case $peerCase -SourceId S03 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents @((New-Document P3))} '권한'
+        $null=Save-Delivery -Context $adminSession -Case $peerCase -SourceId S03 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents @((New-Document P3))
+        Assert-True (@(Get-Deliveries -Context $normalSession -Case $peerCase).Count -eq 0) 'authoritative refresh does not restore admin read access to an unassigned AI result'
+        Assert-True ((Get-Context -Root $modeRoot -UserId U001).user.roles -contains 'admin') 'general-user role filtering never changes the stored administrator roles'
+
+        $backup=Get-Context -Root $modeRoot -UserId $onlyAdmin.userId -AccessMode Admin
+        $former=@(Get-Users $backup | Where-Object {$_.userId -eq 'U001'})[0]
+        $former.roles=@('examiner','ai')
+        $null=Save-MasterRecord -Context $backup -Type Users -Id U001 -Data $former -ExpectedVersion $former.version -RequestId (New-Request)
+        Assert-Throws {Get-Periods -Context $adminSession} '총괄관리자'
+        Assert-Throws {Get-Cases -Context $adminSession -Period $month -Scope All} '총괄관리자'
+        Assert-True ((Get-Context -Root $modeRoot -AccessMode Admin).user.userId -eq $onlyAdmin.userId) 'admin auto-login skips accounts whose admin role was revoked'
+        $current=@(Get-Users $backup | Where-Object {$_.userId -eq $onlyAdmin.userId})[0]
+        $current.active=$false
+        Assert-Throws {Save-MasterRecord -Context $backup -Type Users -Id $current.userId -Data $current -ExpectedVersion $current.version -RequestId (New-Request)} '본인의 관리자 권한'
+        # Model an external provisioning change while keeping the existing
+        # protection against an administrator disabling their own account.
+        $null=Write-Revision -Path $current.path -ExpectedVersion $current.version -RequestId (New-Request) -ActorId setup -Kind Users -TargetId $current.userId -Data ($current | Select-Object * -ExcludeProperty path,version)
+        Assert-Throws {Get-Periods -Context $backup} '활성 사용자'
+        Assert-Throws {Get-Context -Root $modeRoot -AccessMode Admin} '활성 총괄관리자'
+        Assert-True (@(Get-LoginUsers -Root $modeRoot -AccessMode Admin).Count -eq 0) 'no active administrator is never replaced with a regular user'
+        Assert-True ((Get-Context -Root $modeRoot -UserId U002 -AccessMode User).user.roles -notcontains 'admin') 'ordinary login remains available when no admin is active'
+        $peerPath=Join-Path $modeRoot 'Master/Users/U002'
+        $peerRevision=Read-Revision -Path $peerPath
+        $peerRevision.data.roles=@('admin')
+        $null=Write-Revision -Path $peerPath -ExpectedVersion $peerRevision.version -RequestId (New-Request) -ActorId setup -Kind Users -TargetId U002 -Data $peerRevision.data
+        Assert-Throws {Get-Cases -Context $peer -Period $month -Scope Mine} '일반 사용자'
+        Assert-Throws {Get-Context -Root $modeRoot -UserId U002 -AccessMode User} '일반 사용자'
+    }
+
     Write-Host "Workflow tests: $script:passed passed."
 } finally {
     if ($KeepArtifacts) {Write-Host "Artifacts: $testRoot"}

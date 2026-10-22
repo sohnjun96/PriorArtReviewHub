@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Destination,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$DataRoot,
-    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.3'
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.4'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +20,8 @@ if ($destinationPath.Equals($sourcePath, [StringComparison]::OrdinalIgnoreCase) 
 }
 $releasePath = Get-SafePath -Root $destinationPath -Segments @('App', 'releases', $Version)
 $entryPath = Get-SafePath -Root $destinationPath -Segments @('실행.cmd')
+$adminEntryPath = Get-SafePath -Root $destinationPath -Segments @('관리자용.cmd')
+$userEntryPath = Get-SafePath -Root $destinationPath -Segments @('일반사용자용.cmd')
 $launchPath = Get-SafePath -Root $destinationPath -Segments @('Launch.ps1')
 $publishLock = Get-SafePath -Root $destinationPath -Segments @('.publish.lock')
 $utf8Bom = New-Object Text.UTF8Encoding($true)
@@ -37,7 +39,7 @@ function Write-NewDeploymentFile {
 }
 
 Invoke-FileLock -Path $publishLock -TimeoutMilliseconds 10000 -Action {
-    foreach ($reserved in @($releasePath, $entryPath, $launchPath)) {
+    foreach ($reserved in @($releasePath, $entryPath, $adminEntryPath, $userEntryPath, $launchPath)) {
         if (Test-Path -LiteralPath $reserved) { throw "기존 배포 파일을 덮어쓰지 않습니다: $reserved" }
     }
     $sourceEntries = @(Get-ChildItem -LiteralPath $sourcePath -Force -Recurse)
@@ -61,12 +63,16 @@ Invoke-FileLock -Path $publishLock -TimeoutMilliseconds 10000 -Action {
         # Directory.Move refuses an existing version directory.
         [IO.Directory]::Move($stagingPath, $releasePath)
         $escapedDataPath = $dataPath.Replace("'", "''")
-        $launchText = '$ErrorActionPreference = ''Stop''' + "`r`n" +
-            '& (Join-Path $PSScriptRoot ''App\releases\' + $Version + '\Start.ps1'') -DataRoot ''' + $escapedDataPath + "'`r`n"
+        $launchText = 'param([switch]$AdminMode)' + "`r`n" +
+            '$ErrorActionPreference = ''Stop''' + "`r`n" +
+            '& (Join-Path $PSScriptRoot ''App\releases\' + $Version + '\Start.ps1'') -AdminMode:$AdminMode -DataRoot ''' + $escapedDataPath + "'`r`n"
         Write-NewDeploymentFile -Path $launchPath -Text $launchText -Encoding $utf8Bom
         $commandText = "@echo off`r`nsetlocal DisableDelayedExpansion`r`npowershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File ""%~dp0Launch.ps1""`r`nif errorlevel 1 pause`r`n"
+        $adminCommandText = "@echo off`r`nsetlocal DisableDelayedExpansion`r`npowershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File ""%~dp0Launch.ps1"" -AdminMode`r`nif errorlevel 1 pause`r`n"
         Write-NewDeploymentFile -Path $entryPath -Text $commandText -Encoding ([Text.Encoding]::ASCII)
-        [pscustomobject]@{ destination=$destinationPath; release=$releasePath; launcher=$entryPath; dataRoot=$dataPath; version=$Version }
+        Write-NewDeploymentFile -Path $userEntryPath -Text $commandText -Encoding ([Text.Encoding]::ASCII)
+        Write-NewDeploymentFile -Path $adminEntryPath -Text $adminCommandText -Encoding ([Text.Encoding]::ASCII)
+        [pscustomobject]@{ destination=$destinationPath; release=$releasePath; launcher=$entryPath; adminLauncher=$adminEntryPath; userLauncher=$userEntryPath; dataRoot=$dataPath; version=$Version }
     }
     finally {
         if ([IO.Directory]::Exists($stagingPath)) {

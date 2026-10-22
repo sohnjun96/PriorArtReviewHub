@@ -70,7 +70,7 @@ try {
     }
     Test-DeploymentCase 'Release contains exact modules, XAML and version-specific launchers' {
         $release = & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $deploymentPath -DataRoot $storePath
-        Assert-Deployment ($release.version -eq '0.1.3') 'default release version'
+        Assert-Deployment ($release.version -eq '0.1.4') 'default release version'
         foreach ($relative in @('Start.ps1', 'Modules/Storage.psm1', 'Modules/Workflow.psm1', 'Modules/Export.psm1', 'Views/Main.xaml', 'Views/Login.xaml')) {
             $sourceFile = Join-Path (Join-Path $projectPath 'App') $relative
             $copiedFile = Join-Path $release.release $relative
@@ -78,12 +78,47 @@ try {
             Assert-Deployment ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $copiedFile -Algorithm SHA256).Hash) "identical copy $relative"
         }
         $launchText = [IO.File]::ReadAllText((Join-Path $deploymentPath 'Launch.ps1'))
-        Assert-Deployment ($launchText.Contains('App\releases\0.1.3\Start.ps1')) 'launcher pins exact release'
+        Assert-Deployment ($launchText.Contains('App\releases\0.1.4\Start.ps1')) 'launcher pins exact release'
         Assert-Deployment ($launchText.Contains($storePath.Replace("'", "''"))) 'launcher pins production data root'
-        $commandText = [IO.File]::ReadAllText((Join-Path $deploymentPath '실행.cmd'))
-        Assert-Deployment ($commandText.Contains('-STA') -and $commandText.Contains('Launch.ps1') -and $commandText -match '(?i)-ExecutionPolicy\s+RemoteSigned' -and $commandText -notmatch '(?i)-ExecutionPolicy\s+Bypass') 'STA launcher uses process RemoteSigned without Bypass'
+        Assert-Deployment ($launchText.Contains('param([switch]$AdminMode)') -and $launchText.Contains('-AdminMode:$AdminMode')) 'shared PowerShell launcher forwards its switch'
+        Assert-Deployment ($release.launcher -ceq (Join-Path $deploymentPath '실행.cmd') -and $release.adminLauncher -ceq (Join-Path $deploymentPath '관리자용.cmd') -and $release.userLauncher -ceq (Join-Path $deploymentPath '일반사용자용.cmd')) 'launcher metadata includes legacy, administrator and user paths'
+        $commandText = [IO.File]::ReadAllText($release.userLauncher)
+        $adminCommandText = [IO.File]::ReadAllText($release.adminLauncher)
+        $legacyCommandText = [IO.File]::ReadAllText($release.launcher)
+        Assert-Deployment ($commandText -ceq $legacyCommandText) 'legacy launcher starts ordinary user mode'
+        Assert-Deployment ($commandText -notmatch '(?i)-AdminMode' -and $adminCommandText.Replace(' -AdminMode', '') -ceq $commandText) 'CMD role differs only by administrator switch'
+        foreach ($entry in @($release.launcher, $release.adminLauncher, $release.userLauncher)) {
+            $entryText = [IO.File]::ReadAllText($entry)
+            Assert-Deployment ($entryText.Contains('-STA') -and $entryText.Contains('Launch.ps1') -and $entryText.Contains('setlocal DisableDelayedExpansion') -and $entryText.Contains('if errorlevel 1 pause') -and $entryText -match '(?i)-ExecutionPolicy\s+RemoteSigned' -and $entryText -notmatch '(?i)-ExecutionPolicy\s+Bypass') 'STA launchers use process RemoteSigned and retain error display'
+            Assert-Deployment (@([IO.File]::ReadAllBytes($entry) | Where-Object { $_ -gt 127 }).Count -eq 0) 'CMD contents are ASCII for every Windows code page'
+        }
         $bom = [IO.File]::ReadAllBytes((Join-Path $deploymentPath 'Launch.ps1'))
         Assert-Deployment ($bom.Length -gt 3 -and $bom[0] -eq 239 -and $bom[1] -eq 187 -and $bom[2] -eq 191) 'PowerShell launcher UTF-8 BOM'
+    }
+    Test-DeploymentCase 'Source demo launchers choose administrator or ordinary user mode' {
+        $userCommand = [IO.File]::ReadAllText((Join-Path $projectPath '일반사용자용.cmd')).Replace("`r`n", "`n").Trim()
+        $adminCommand = [IO.File]::ReadAllText((Join-Path $projectPath '관리자용.cmd')).Replace("`r`n", "`n").Trim()
+        $legacyCommand = [IO.File]::ReadAllText((Join-Path $projectPath '실행.cmd')).Replace("`r`n", "`n").Trim()
+        Assert-Deployment ($userCommand -ceq $legacyCommand -and $adminCommand.Replace(' -AdminMode', '') -ceq $userCommand) 'all demo launchers use the same store with only the administrator switch differing'
+        Assert-Deployment ($userCommand.Contains('%~dp0App\Start.ps1') -and $userCommand -match '(?i)-Demo' -and $userCommand -notmatch '(?i)-AdminMode') 'source user launcher enters demo selection mode'
+        foreach ($entryName in @('관리자용.cmd', '일반사용자용.cmd', '실행.cmd', '운영실행.cmd.example')) {
+            $entryBytes = [IO.File]::ReadAllBytes((Join-Path $projectPath $entryName))
+            Assert-Deployment (@($entryBytes | Where-Object { $_ -gt 127 }).Count -eq 0) "ASCII source launcher $entryName"
+        }
+        $productionExample = [IO.File]::ReadAllText((Join-Path $projectPath '운영실행.cmd.example'))
+        Assert-Deployment ($productionExample.Contains('-DataRoot "\\FILESERVER\AIReview"') -and $productionExample.Contains('append -AdminMode')) 'production example documents the same administrator flag'
+    }
+    Test-DeploymentCase 'Shared launcher forwards mode and the identical store at runtime' {
+        $probeRoot = Join-Path $testRoot 'LauncherProbe'
+        $probeRelease = Join-Path $probeRoot 'App/releases/0.1.4'
+        [void][IO.Directory]::CreateDirectory($probeRelease)
+        [IO.File]::Copy((Join-Path $deploymentPath 'Launch.ps1'), (Join-Path $probeRoot 'Launch.ps1'))
+        $probeScript = 'param([switch]$AdminMode,[string]$DataRoot)' + "`r`n" + '[pscustomobject]@{ adminMode=[bool]$AdminMode; dataRoot=$DataRoot } | ConvertTo-Json -Compress' + "`r`n"
+        [IO.File]::WriteAllText((Join-Path $probeRelease 'Start.ps1'), $probeScript, (New-Object Text.UTF8Encoding($true)))
+        $userResult = & (Join-Path $probeRoot 'Launch.ps1') | ConvertFrom-Json
+        $adminResult = & (Join-Path $probeRoot 'Launch.ps1') -AdminMode | ConvertFrom-Json
+        Assert-Deployment (-not $userResult.adminMode -and $adminResult.adminMode) 'administrator switch reaches Start.ps1'
+        Assert-Deployment ($userResult.dataRoot -ceq $storePath -and $adminResult.dataRoot -ceq $storePath) 'both entry points share the pinned production data root'
     }
     Test-DeploymentCase 'Generated launcher parses on Windows PowerShell 5.1' {
         $launchLiteral = "'" + (Join-Path $deploymentPath 'Launch.ps1').Replace("'", "''") + "'"
@@ -108,6 +143,17 @@ try {
         $unsafeDestination = Join-Path (Join-Path $projectPath 'App') 'MustNeverBeCreated'
         Assert-DeploymentThrows { & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $unsafeDestination -DataRoot $storePath } '원본 App 폴더 안'
         Assert-Deployment (-not (Test-Path -LiteralPath $unsafeDestination)) 'unsafe target never created'
+    }
+    Test-DeploymentCase 'Every reserved launcher rejects an existing file before release creation' {
+        foreach ($entryName in @('실행.cmd', '관리자용.cmd', '일반사용자용.cmd', 'Launch.ps1')) {
+            $reservedTarget = Join-Path $testRoot ('Reserved-' + [guid]::NewGuid().ToString('N'))
+            [void][IO.Directory]::CreateDirectory($reservedTarget)
+            $existingEntry = Join-Path $reservedTarget $entryName
+            [IO.File]::WriteAllText($existingEntry, 'keep-existing-launcher')
+            Assert-DeploymentThrows { & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $reservedTarget -DataRoot $storePath } '덮어쓰지 않습니다'
+            Assert-Deployment ([IO.File]::ReadAllText($existingEntry) -ceq 'keep-existing-launcher') "preserved reserved launcher $entryName"
+            Assert-Deployment (-not (Test-Path -LiteralPath (Join-Path $reservedTarget 'App/releases/0.1.4'))) 'release is not written when a reserved launcher exists'
+        }
     }
     Write-Host ('Deployment tests: {0} passed (PowerShell {1}).' -f $script:passed, $PSVersionTable.PSVersion)
 }

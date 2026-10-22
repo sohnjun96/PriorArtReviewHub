@@ -80,6 +80,10 @@ $script:context=if ($AdminMode) {Get-Context -Root $DataRoot -AccessMode Admin} 
 if (-not $script:context) {return}
 $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'Views\Main.xaml'))
 try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
+# Fit the initial window to the desktop work area, including the taskbar.
+$desktopArea=[Windows.SystemParameters]::WorkArea
+$window.Width=[Math]::Min($window.Width,[Math]::Max($window.MinWidth,$desktopArea.Width))
+$window.Height=[Math]::Min($window.Height,[Math]::Max($window.MinHeight,$desktopArea.Height))
 $script:ui = @{}
 $names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','DeliveryStateText','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','SaveEvaluationButton','EvaluationSavedText','AdminTab','AdminContentHost','ModeText','StatusText')
 $names += 'CaseExportButton'
@@ -704,6 +708,8 @@ function Export-Current([bool]$IncludeAttachments,[string]$CaseId='') {
 
 . (Join-Path $appDirectory 'Ui\Admin.ps1')
 Initialize-AdminUi
+. (Join-Path $appDirectory 'Ui/Layout.ps1')
+foreach ($list in @($ui.CasesGrid,$ui.SubmissionRowsGrid,$ui.PublishedGrid,$ui.RankGrid,$ui.RatingsGrid,$ui.DocumentsGrid,$ui.PeriodMembersGrid,$ui.PeriodAssignmentsGrid,$ui.PeriodSourcesList)) {Enable-ReadableListScroll $list}
 
 function Set-SessionControls {
     $script:changing=$true

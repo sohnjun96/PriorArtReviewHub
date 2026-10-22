@@ -9,7 +9,9 @@ foreach ($taskTestName in @('Storage.Tests.ps1','Workflow.Tests.ps1','Selection.
     if ($LASTEXITCODE -ne 0) {throw "검증 실패: $taskTestName"}
 }
 if ($IncludeGui) {
-    & $taskEngine -NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File (Join-Path $PSScriptRoot 'Gui.Runtime.Tests.ps1')
-    if ($LASTEXITCODE -ne 0) {throw '화면 실행 검증 실패'}
+    foreach ($taskGuiTest in @('Gui.Layout.Tests.ps1','Gui.Runtime.Tests.ps1')) {
+        & $taskEngine -NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File (Join-Path $PSScriptRoot $taskGuiTest)
+        if ($LASTEXITCODE -ne 0) {throw "화면 실행 검증 실패: $taskGuiTest"}
+    }
 }
 Write-Output 'PASS all requested checks'

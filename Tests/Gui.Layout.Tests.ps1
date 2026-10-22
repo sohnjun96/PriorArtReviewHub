@@ -1,0 +1,133 @@
+﻿$ErrorActionPreference='Stop'
+if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {throw 'Run layout checks in STA mode.'}
+Add-Type -AssemblyName PresentationFramework,PresentationCore,WindowsBase
+$projectPath=Split-Path $PSScriptRoot -Parent
+$appPath=Join-Path $projectPath 'App'
+. (Join-Path $appPath 'Ui/Layout.ps1')
+$outputPath=Join-Path $projectPath 'TestResults'
+[void][IO.Directory]::CreateDirectory($outputPath)
+function Read-LayoutView([string]$Name) {
+    $reader=[Xml.XmlReader]::Create((Join-Path $appPath "Views/$Name.xaml"))
+    try {return [Windows.Markup.XamlReader]::Load($reader)} finally {$reader.Close()}
+}
+function Update-LayoutTest {
+    $window.UpdateLayout()
+    $window.Dispatcher.Invoke([Windows.Threading.DispatcherPriority]::Background,[Action]{})
+    $window.UpdateLayout()
+}
+function Assert-Layout([bool]$Condition,[string]$Message) {if (-not $Condition) {throw $Message}}
+function Point-In($Element,$Parent) {return $Element.TranslatePoint((New-Object Windows.Point(0,0)),$Parent)}
+function Assert-ButtonVisible($Button) {
+    $point=Point-In $Button $window
+    Assert-Layout ($Button.IsVisible -and $Button.ActualHeight -ge 30 -and $point.Y -ge 0 -and $point.Y+$Button.ActualHeight -lt $window.ActualHeight-25) "$($Button.Name) is clipped at $($window.Width)x$($window.Height)."
+}
+function Save-LayoutImage([string]$Name) {
+    Update-LayoutTest
+    $bitmap=New-Object Windows.Media.Imaging.RenderTargetBitmap ([int]$window.ActualWidth),([int]$window.ActualHeight),96,96,([Windows.Media.PixelFormats]::Pbgra32)
+    $bitmap.Render($window)
+    $encoder=New-Object Windows.Media.Imaging.PngBitmapEncoder
+    $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
+    $stream=[IO.File]::Create((Join-Path $outputPath ("Gui.Layout-$Name.png")))
+    try {$encoder.Save($stream)} finally {$stream.Dispose()}
+}
+function Send-ListWheel($List,[int]$Delta) {
+    $eventArgs=New-Object Windows.Input.MouseWheelEventArgs([Windows.Input.Mouse]::PrimaryDevice,0,$Delta)
+    $eventArgs.RoutedEvent=[Windows.UIElement]::PreviewMouseWheelEvent
+    $List.RaiseEvent($eventArgs)
+    Update-LayoutTest
+    return $eventArgs.Handled
+}
+
+$window=Read-LayoutView Main
+try {
+    $controls=@{}
+    foreach ($name in @('MainTabs','PersonalTabs','EvaluationTabs','PersonalWorkTab','EvaluationTab','TargetSelectionTab','DeliveryTab','AdminTab','CaseTitle','CaseSubtitle','IdentityText','WorkflowHintText','EvaluationStateText','RankGrid','RatingsGrid','CasesGrid','DocumentsGrid','PublishedGrid','SubmissionRowsGrid','EvaluationScroll','DeliveryScroll','PublishedScroll','CaseSidebarScroll','ExportOptions','SaveEvaluationButton','PublishButton','SubmitButton','GoEvaluationButton','AdminContentHost')) {$controls[$name]=$window.FindName($name)}
+    $adminView=Read-LayoutView Admin
+    $controls.AdminContentHost.Content=$adminView
+    $controls.IdentityText.Text='심사관 · 심사국 / 심사과'
+    $controls.CaseTitle.Text='10-2026-0000123'
+    $controls.CaseSubtitle.Text='선행기술조사 · ChatGPT · 클로드 납품 완료'
+    $controls.WorkflowHintText.Text='AI 검색 결과 평가 · 왼쪽 출원을 선택하면 바로 평가할 수 있습니다.'
+    $controls.EvaluationStateText.Text='선행기술조사와 AI 결과 묶음을 비교해 순위를 선택하세요. 대기 중인 방식은 납품 후 평가할 수 있습니다.'
+    $rankRows=@(foreach ($name in @('선행기술조사','ChatGPT','클로드')) {[pscustomobject]@{sourceName=$name;choice='1';notDelivered=$false;noResults=$false}})
+    $ratingRows=@(foreach ($source in @('선행기술조사','ChatGPT','클로드')) {foreach ($index in 1..7) {[pscustomobject]@{sourceName=$source;identifier=('10-2025-{0:0000000}' -f $index);scoreText='';citedText='';note=''}}})
+    $controls.RankGrid.ItemsSource=$rankRows
+    $controls.RatingsGrid.ItemsSource=$ratingRows
+    $controls.PublishedGrid.ItemsSource=$ratingRows
+    $controls.DocumentsGrid.ItemsSource=@($ratingRows | Select-Object -First 7)
+    $controls.CasesGrid.ItemsSource=@(1..10 | ForEach-Object {[pscustomobject]@{applicationNumber=('10-2026-{0:0000000}' -f $_);cpc='G06F 16/00';examinerName='심사관';statusLabel='납품 완료'}})
+    $controls.SubmissionRowsGrid.ItemsSource=$controls.CasesGrid.ItemsSource
+    foreach ($name in @('RankGrid','RatingsGrid','CasesGrid','DocumentsGrid','PublishedGrid','SubmissionRowsGrid')) {Enable-ReadableListScroll $controls[$name]}
+    $window.ShowActivated=$false;$window.ShowInTaskbar=$false
+    $window.Show()
+    foreach ($role in @('Examiner','AiExaminer','Admin')) {
+        foreach ($name in @('MainTabs','PersonalTabs','EvaluationTabs')) {
+            $tabs=$controls[$name]
+            if ($role -eq 'Admin' -or ($role -eq 'AiExaminer' -and $name -eq 'MainTabs')) {$tabs.ClearValue([Windows.Controls.Control]::TemplateProperty)} else {$tabs.Template=$window.Resources['ContentOnlyTabs']}
+            if ($name -ne 'MainTabs') {$tabs.Margin=if ($role -eq 'Admin') {12} else {0}}
+        }
+        $controls.MainTabs.SelectedItem=$controls.PersonalWorkTab
+        $controls.PersonalTabs.SelectedItem=$controls.EvaluationTab
+        $controls.EvaluationTabs.SelectedIndex=1
+        foreach ($size in @(@(1480,940),@(1366,728),@(1220,760),@(1100,640))) {
+            $window.Width=$size[0];$window.Height=$size[1]
+            $controls.EvaluationScroll.ScrollToTop();Update-LayoutTest
+            $rank=$controls.RankGrid;$ratings=$controls.RatingsGrid;$scroll=$controls.EvaluationScroll
+            Assert-Layout ($rank.ActualHeight -ge 148 -and $ratings.ActualHeight -ge 300 -and $ratings.ActualHeight -gt $rank.ActualHeight) "$role $size collapses a review list."
+            Assert-Layout ($scroll.ViewportHeight -gt 60) "$role $size has no usable page viewport."
+            Assert-Layout ((Point-In $ratings $scroll.Content).Y+$ratings.ActualHeight -le $scroll.Content.ActualHeight+1) "$role $size clips the last document rows outside the scroll extent."
+            Assert-ButtonVisible $controls.SaveEvaluationButton
+            # The basic comparison fits three full rows, not just its header or one row.
+            Assert-Layout ((Get-ListInnerScroll $rank).ScrollableHeight -lt 1) 'Three comparison methods must fit without an inner scrollbar.'
+            $scroll.ScrollToBottom();Update-LayoutTest
+            Assert-Layout ((Point-In $ratings $scroll).Y+$ratings.ActualHeight -le $scroll.ViewportHeight+1) 'Page scrolling cannot reach the bottom of the ratings list.'
+            $ratings.ScrollIntoView($ratingRows[-1]);Update-LayoutTest
+            $lastRow=$ratings.ItemContainerGenerator.ContainerFromItem($ratingRows[-1])
+            Assert-Layout ($null -ne $lastRow) 'The last of 21 documents cannot be reached.'
+            $rowPoint=Point-In $lastRow $scroll
+            Assert-Layout ($rowPoint.Y -ge -1 -and $rowPoint.Y+$lastRow.ActualHeight -le $scroll.ViewportHeight+1) 'Last document row is hidden after scrolling.'
+            Assert-ButtonVisible $controls.SaveEvaluationButton
+            if ($role -eq 'Examiner' -and $size[0] -eq 1366) {
+                Save-LayoutImage 'Evaluation-1366-Bottom'
+                $scroll.ScrollToTop();Update-LayoutTest
+                Save-LayoutImage 'Evaluation-1366-Top'
+            }
+        }
+        Write-Output "PASS $role review at four window sizes: 3 comparison methods, 21 documents, minimum list heights, reachable rows and pinned save"
+    }
+    # Wheel over a list must move the surrounding page when the list is clipped.
+    $controls.EvaluationScroll.ScrollToTop();Update-LayoutTest
+    $handled=Send-ListWheel $controls.RankGrid -120
+    Assert-Layout ($handled -and $controls.EvaluationScroll.VerticalOffset -gt 0) 'Nested ratings list traps downward wheel input.'
+    $controls.EvaluationScroll.ScrollToBottom();Update-LayoutTest
+    $previousOffset=$controls.EvaluationScroll.VerticalOffset
+    $handled=Send-ListWheel $controls.RatingsGrid 120
+    Assert-Layout ($handled -and $controls.EvaluationScroll.VerticalOffset -lt $previousOffset) 'Nested ratings list traps upward wheel input.'
+
+    $controls.MainTabs.SelectedItem=$controls.DeliveryTab;Update-LayoutTest
+    Assert-Layout ($controls.DocumentsGrid.ActualHeight -ge 250) 'AI input list collapsed.'
+    Assert-ButtonVisible $controls.PublishButton
+    $controls.DeliveryScroll.ScrollToBottom();Update-LayoutTest
+    $controls.DocumentsGrid.ScrollIntoView($controls.DocumentsGrid.Items[6]);Update-LayoutTest
+    Assert-Layout ((Point-In $controls.DocumentsGrid $controls.DeliveryScroll.Content).Y+$controls.DocumentsGrid.ActualHeight -le $controls.DeliveryScroll.Content.ActualHeight+1) 'AI input list exceeds scroll extent.'
+    Save-LayoutImage 'AI-Minimum'
+    $controls.ExportOptions.IsExpanded=$true;Update-LayoutTest
+    Assert-Layout ($controls.CasesGrid.ActualHeight -ge 250) 'Opening downloads collapses the case list.'
+    $controls.CaseSidebarScroll.ScrollToBottom();Update-LayoutTest
+    $zipButton=$window.FindName('ZipButton')
+    Assert-Layout ((Point-In $zipButton $controls.CaseSidebarScroll).Y+$zipButton.ActualHeight -le $controls.CaseSidebarScroll.ViewportHeight+1) 'Expanded download actions cannot be reached.'
+
+    $controls.MainTabs.SelectedItem=$controls.PersonalWorkTab
+    $controls.PersonalTabs.SelectedItem=$controls.TargetSelectionTab;Update-LayoutTest
+    Assert-Layout ($controls.SubmissionRowsGrid.ActualHeight -ge 250) 'Selection list collapsed.'
+    Assert-ButtonVisible $controls.SubmitButton
+    $controls.PersonalTabs.SelectedItem=$controls.EvaluationTab;$controls.EvaluationTabs.SelectedIndex=0;Update-LayoutTest
+    Assert-Layout ($controls.PublishedGrid.ActualHeight -ge 300) 'Published result list collapsed.'
+    Assert-ButtonVisible $controls.GoEvaluationButton
+    $controls.MainTabs.SelectedItem=$controls.AdminTab
+    $adminView.FindName('UserFieldsPanel').Visibility='Collapsed'
+    $adminView.FindName('PeriodFieldsPanel').Visibility='Visible';Update-LayoutTest
+    Assert-Layout ($adminView.FindName('PeriodMembersGrid').ActualHeight -ge 250) 'Administrator participant list collapsed.'
+    Assert-ButtonVisible ($adminView.FindName('AdminSaveButton'))
+    Write-Output 'PASS wheel chaining, AI input, expanded downloads, selection, result lookup and administrator list layout'
+} finally {$window.Close()}

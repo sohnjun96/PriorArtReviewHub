@@ -1,4 +1,4 @@
 @echo off
-setlocal
-powershell.exe -NoLogo -NoProfile -STA -File "%~dp0App\Start.ps1" -Demo
+setlocal DisableDelayedExpansion
+powershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "%~dp0App\Start.ps1" -Demo
 if errorlevel 1 pause

@@ -60,10 +60,10 @@ try {
             Assert-Deployment ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $copiedFile -Algorithm SHA256).Hash) "identical copy $relative"
         }
         $launchText = [IO.File]::ReadAllText((Join-Path $deploymentPath 'Launch.ps1'))
-        Assert-Deployment ($launchText.Contains('App\releases\0.1.0\Start.ps1')) 'launcher pins exact release'
+        Assert-Deployment ($launchText.Contains('App\releases\0.1.1\Start.ps1')) 'launcher pins exact release'
         Assert-Deployment ($launchText.Contains($storePath.Replace("'", "''"))) 'launcher pins production data root'
         $commandText = [IO.File]::ReadAllText((Join-Path $deploymentPath '실행.cmd'))
-        Assert-Deployment ($commandText.Contains('-STA') -and $commandText.Contains('Launch.ps1') -and $commandText -notmatch '(?i)-ExecutionPolicy\s+Bypass') 'STA launcher without policy bypass'
+        Assert-Deployment ($commandText.Contains('-STA') -and $commandText.Contains('Launch.ps1') -and $commandText -match '(?i)-ExecutionPolicy\s+RemoteSigned' -and $commandText -notmatch '(?i)-ExecutionPolicy\s+Bypass') 'STA launcher uses process RemoteSigned without Bypass'
         $bom = [IO.File]::ReadAllBytes((Join-Path $deploymentPath 'Launch.ps1'))
         Assert-Deployment ($bom.Length -gt 3 -and $bom[0] -eq 239 -and $bom[1] -eq 187 -and $bom[2] -eq 191) 'PowerShell launcher UTF-8 BOM'
     }

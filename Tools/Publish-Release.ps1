@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Destination,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$DataRoot,
-    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.0'
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,7 +64,7 @@ Invoke-FileLock -Path $publishLock -TimeoutMilliseconds 10000 -Action {
         $launchText = '$ErrorActionPreference = ''Stop''' + "`r`n" +
             '& (Join-Path $PSScriptRoot ''App\releases\' + $Version + '\Start.ps1'') -DataRoot ''' + $escapedDataPath + "'`r`n"
         Write-NewDeploymentFile -Path $launchPath -Text $launchText -Encoding $utf8Bom
-        $commandText = "@echo off`r`nsetlocal DisableDelayedExpansion`r`npowershell.exe -NoLogo -NoProfile -STA -File ""%~dp0Launch.ps1""`r`nif errorlevel 1 pause`r`n"
+        $commandText = "@echo off`r`nsetlocal DisableDelayedExpansion`r`npowershell.exe -NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File ""%~dp0Launch.ps1""`r`nif errorlevel 1 pause`r`n"
         Write-NewDeploymentFile -Path $entryPath -Text $commandText -Encoding ([Text.Encoding]::ASCII)
         [pscustomobject]@{ destination=$destinationPath; release=$releasePath; launcher=$entryPath; dataRoot=$dataPath; version=$Version }
     }

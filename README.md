@@ -1,15 +1,17 @@
-# AI 선행기술조사 · 평가 관리 0.1.0
+# AI 선행기술조사 · 평가 관리 0.1.1
 
 Windows PowerShell 5.1 또는 Windows용 PowerShell 7의 WPF 프로그램입니다. 공유폴더의 JSON이 원본이며 Excel 설치 없이 `.xlsx`와 첨부 ZIP을 만듭니다. AI 검색을 직접 실행하는 도구가 아니라, 제출·조사 결과 납품·평가를 관리하는 도구입니다.
 
 핵심 업무를 실행할 수 있는 시제품입니다. 관리자 문헌 일괄 등록, 진행 중인 건의 그룹 이관, 조사 방식 간 동일 문헌·인용 불일치 자동 안내는 아직 포함하지 않습니다. 관리자 기준정보 편집은 JSON 입력 방식입니다.
+
+최신 배포본: [AIReview-0.1.1.zip](dist/AIReview-0.1.1.zip). 0.1.0에서 실행 정책 오류가 났다면 이 버전의 `실행.cmd`를 사용하세요.
 
 ## 로컬 시연
 
 `실행.cmd`를 실행하거나 다음 명령을 사용합니다. 현재 Windows 계정에 연결된 시연 관리자와 가상 참여자가 `DemoData`에 생성됩니다. 실제 출원정보는 시연 저장소에 넣지 마세요.
 
 ```powershell
-powershell.exe -NoProfile -STA -File .\App\Start.ps1 -Demo
+powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\App\Start.ps1 -Demo
 ```
 
 ## 첫 운영 설정과 배포
@@ -17,17 +19,37 @@ powershell.exe -NoProfile -STA -File .\App\Start.ps1 -Demo
 전산 담당자가 승인한 **비어 있는 저장소**를 지정합니다. 다음은 설명용 경로이며 스크립트가 서버나 ACL을 자동 설정하지 않습니다. 초기화는 현재 계정 SID에 연결된 `U001` 한 명, `G01`, 조사 방식 세 개, 현재 운영월만 만듭니다. 별도 관리자의 SID를 쓰려면 `-AdminSid 'S-1-5-21-…'`를 추가합니다. 기존 파일이 있으면 중단하며, 시연 표식은 만들지 않습니다.
 
 ```powershell
-.\Tools\Initialize-Store.ps1 -Root '\\FILESERVER\AIReview\Store' -AdminName '관리자 성명'
-.\Tools\Publish-Release.ps1 -Destination '\\FILESERVER\AIReview\Program' -DataRoot '\\FILESERVER\AIReview\Store'
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Tools\Initialize-Store.ps1 -Root '\\FILESERVER\AIReview\Store' -AdminName '관리자 성명'
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\Tools\Publish-Release.ps1 -Destination '\\FILESERVER\AIReview\Program' -DataRoot '\\FILESERVER\AIReview\Store'
 ```
 
-사용자는 배포 폴더의 `실행.cmd`를 실행합니다. `Launch.ps1`이 정확히 `App\releases\0.1.0`을 가리킵니다. 직접 실행할 때는 다음과 같습니다.
+사용자는 배포 폴더의 `실행.cmd`를 실행합니다. `Launch.ps1`이 정확히 `App\releases\0.1.1`을 가리킵니다. 직접 실행할 때는 다음과 같습니다.
 
 ```powershell
-powershell.exe -NoProfile -STA -File .\App\Start.ps1 -DataRoot '\\FILESERVER\AIReview\Store'
+powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\App\Start.ps1 -DataRoot '\\FILESERVER\AIReview\Store'
 ```
 
-기관의 스크립트 서명·실행 정책을 적용하세요. 제공 실행 파일은 실행 정책을 우회하지 않습니다. 배포 스크립트는 기존 버전과 실행 진입점을 덮어쓰지 않으므로 업데이트 때는 새 배포 폴더에서 검증한 뒤 사용자의 바로가기를 전환합니다. 초기화가 중간 실패하면 일부 기록이 남을 수 있습니다. 아직 사용하지 않은 저장소인지 확인하고 별도 보존한 후 새 빈 폴더에 초기화하세요.
+실행 파일은 해당 PowerShell 프로세스에만 `RemoteSigned`를 적용합니다. 컴퓨터·사용자 계정의 영구 실행 정책을 변경하지 않으며, `Bypass`는 사용하지 않습니다. 기관의 `MachinePolicy`·`UserPolicy`와 스크립트 서명 기준은 계속 우선합니다. 배포 스크립트는 기존 버전과 실행 진입점을 덮어쓰지 않으므로 업데이트 때는 새 배포 폴더에서 검증한 뒤 사용자의 바로가기를 전환합니다. 초기화가 중간 실패하면 일부 기록이 남을 수 있습니다. 아직 사용하지 않은 저장소인지 확인하고 별도 보존한 후 새 빈 폴더에 초기화하세요.
+
+## 스크립트를 실행할 수 없다는 오류
+
+0.1.1부터 `실행.cmd`가 이 실행에만 `RemoteSigned`를 지정하므로, 기본 `Restricted` 정책인 PC에서도 로컬 스크립트를 실행할 수 있습니다. 기존 파일을 쓰는 경우 프로젝트 폴더에서 위의 직접 실행 명령을 사용하세요. [Microsoft 실행 정책 설명](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1)
+
+GitHub ZIP을 내려받았다면 인터넷에서 받은 파일이라는 표시 때문에 여전히 차단될 수 있습니다. ZIP 파일의 **속성 → 차단 해제 → 적용** 후 새 폴더에 압축을 푸세요. 이미 압축을 풀었다면, 내용을 신뢰하는 이 프로젝트 폴더에서 아래 명령으로 프로그램 파일만 차단 해제할 수 있습니다. 원본 데이터나 다른 폴더는 변경하지 않습니다.
+
+```powershell
+Get-ChildItem -LiteralPath .\App,.\Tools,.\Tests -Recurse -File |
+    Where-Object { $_.Extension -in '.ps1', '.psm1' } |
+    Unblock-File
+```
+
+배포 폴더의 `Launch.ps1`에도 다운로드 표시가 있다면 해당 파일에 `Unblock-File -LiteralPath .\Launch.ps1`을 적용합니다. 이 명령은 파일의 다운로드 표시만 제거하며 실행 정책을 변경하지 않습니다. [Microsoft Unblock-File 설명](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/unblock-file?view=powershell-5.1)
+
+계속 차단되면 다음 명령으로 **Windows PowerShell 5.1** 정책을 확인하세요. `MachinePolicy` 또는 `UserPolicy`가 `Restricted`·`AllSigned`이면 전산 담당자가 허용·서명한 배포본이 필요합니다. 일부 공유폴더 경로가 인터넷 영역으로 분류될 때도 같은 담당자의 확인이 필요합니다.
+
+```powershell
+powershell.exe -NoProfile -Command "Get-ExecutionPolicy -List"
+```
 
 ## 사용자·그룹·월 운영 관리
 
@@ -104,10 +126,10 @@ powershell.exe -NoProfile -STA -File .\App\Start.ps1 -DataRoot '\\FILESERVER\AIR
 ## 점검과 백업
 
 ```powershell
-powershell.exe -NoProfile -STA -File .\Tests\Run-All.ps1
-pwsh.exe -NoProfile -STA -File .\Tests\Run-All.ps1
+powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\Tests\Run-All.ps1
+pwsh.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\Tests\Run-All.ps1
 # 실제 창을 열어 화면 동작까지 검사하려면 추가:
-powershell.exe -NoProfile -STA -File .\Tests\Run-All.ps1 -IncludeGui
+powershell.exe -NoProfile -STA -ExecutionPolicy RemoteSigned -File .\Tests\Run-All.ps1 -IncludeGui
 ```
 
 로컬 테스트는 별도 프로세스의 동시 저장·오래된 버전 거절·동일 요청 재시도·중단된 프로세스의 잠금 해제·JSON 손상·WPF 구성·업무 규칙·내보내기·운영 초기화와 배포를 검사합니다. 기본 검증은 창을 표시하지 않으며 `-IncludeGui`가 실제 창 실행 검증을 추가합니다. **실제 SMB/NAS에서 두 PC 동시 사용, 실제 사용자 ACL, 네트워크 단절 중 저장·복구는 아직 검증하지 않았습니다.** 운영 전 해당 환경에서 확인하세요.

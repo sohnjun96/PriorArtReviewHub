@@ -313,6 +313,7 @@ function Get-WCase {
     $envelope = Read-Revision -Path $path
     if ($null -eq $envelope) { throw '제출 건을 찾을 수 없습니다.' }
     $actual = Convert-WRecord $envelope $path
+    if (-not (Test-WSelectionPublished $Context $actual)) { throw '아직 확정되지 않은 대상건입니다.' }
     foreach ($name in @('caseId','period','groupId','userId')) {
         if ([string]$actual.$name -ne [string]$Case.$name) { throw '제출 건 참조정보가 일치하지 않습니다.' }
     }
@@ -370,11 +371,13 @@ function Get-Cases {
         if (-not [System.IO.Directory]::Exists($submissions)) { continue }
         foreach ($owner in Get-ChildItem -LiteralPath $submissions -Directory) {
             if ($Scope -eq 'Mine' -and $owner.Name -ne $user.userId) { continue }
+            $selectionSnapshot = Read-Revision -Path (Get-WSelectionPath $Context $Period $owner.Name)
             foreach ($folder in Get-ChildItem -LiteralPath $owner.FullName -Directory) {
                 $envelope = Read-Revision -Path $folder.FullName
                 if ($null -ne $envelope) {
                     $record = Convert-WRecord $envelope $folder.FullName
                     if ($record.period -ne $Period -or $record.groupId -ne $group.Name -or $record.userId -ne $owner.Name -or $record.caseId -ne $folder.Name) { throw "제출정보 참조가 손상되었습니다: $($folder.FullName)" }
+                    if (-not (Test-WSelectionPublished $Context $record -Selection $selectionSnapshot -UseSnapshot)) { continue }
                     $name = [string](Get-WValue $record 'examinerName' '')
                     if (-not $name -and $names.ContainsKey($record.userId)) { $name = $names[$record.userId] }
                     Set-WValue $record 'examinerName' $name
@@ -391,6 +394,117 @@ function Convert-WApplicationNumber {
     if ($text -match '^(\d{2})((?:19|20)\d{2})(\d{7})$') { return '{0}-{1}-{2}' -f $Matches[1], $Matches[2], $Matches[3] }
     if ($text -notmatch '^\d{2}-(?:19|20)\d{2}-\d{7}$') { throw '출원번호는 10-2026-0000001 형식 또는 숫자 13자리로 입력하십시오.' }
     return $text
+}
+
+function Get-WSelectionPath {
+    param($Context, [string]$Period, [string]$UserId)
+    Assert-WPeriod $Period
+    Assert-WId $UserId
+    return Join-Path $Context.root ('Data\{0}\Selections\{1}' -f $Period, $UserId)
+}
+
+function Test-WSelectionPublished {
+    param($Context, $Case, $Selection=$null, [switch]$UseSnapshot)
+    $request = [string](Get-WValue $Case 'selectionRequestId' '')
+    if (-not $request) { return $true } # Already submitted by earlier versions.
+    if (-not $UseSnapshot) {$Selection = Read-Revision -Path (Get-WSelectionPath $Context $Case.period $Case.userId)}
+    return $null -ne $selection -and $selection.data.status -eq 'Confirmed' -and $selection.data.groupId -eq $Case.groupId -and $selection.requestId -eq $request -and $Case.caseId -in @($selection.data.caseIds)
+}
+
+function Test-WOtherSubmission {
+    param($Context, [string]$Period, [string]$UserId, [string]$Number)
+    $base=Join-Path $Context.root ('Data\'+$Period)
+    if (-not [IO.Directory]::Exists($base)) {return $false}
+    foreach ($group in Get-ChildItem -LiteralPath $base -Directory) {
+        $sub=Join-Path $group.FullName Submissions
+        if (-not [IO.Directory]::Exists($sub)) {continue}
+        foreach ($owner in Get-ChildItem -LiteralPath $sub -Directory) {
+            if ($owner.Name -eq $UserId) {continue}
+            try {foreach ($folder in Get-ChildItem -LiteralPath $owner.FullName -Directory -ErrorAction Stop) {
+                $other=Read-Revision -Path $folder.FullName
+                if ($other -and $other.data.applicationNumber -eq $Number -and $other.data.status -ne 'Cancelled' -and (Test-WSelectionPublished $Context $other.data)) {return $true}
+            }} catch [UnauthorizedAccessException] {}
+        }
+    }
+    return $false
+}
+
+function Get-TargetSelection {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Period)
+    $user = Assert-WContext $Context
+    if (-not (Test-WRole $user 'examiner')) { throw '심사관 역할이 필요합니다.' }
+    $null = Get-Period $Context $Period
+    $path = Get-WSelectionPath $Context $Period $user.userId
+    $saved = Read-Revision -Path $path
+    if ($saved) { return Convert-WRecord $saved $path }
+    $existing = @(Get-Cases $Context $Period Mine | Where-Object { $_.status -ne 'Cancelled' })
+    return [pscustomobject]@{period=$Period;userId=$user.userId;status=$(if ($existing.Count) {'Confirmed'} else {'NotStarted'});rows=@();caseIds=@($existing | ForEach-Object {$_.caseId});version=0;path=$path}
+}
+
+function Save-TargetSelection {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Period,
+        [Parameter(Mandatory)][int]$ExpectedVersion, [Parameter(Mandatory)][string]$RequestId,
+        [Parameter(Mandatory)][ValidateSet('Draft','Confirmed')][string]$Status, [object[]]$Rows=@())
+    $user = Assert-WContext $Context
+    if (-not (Test-WRole $user 'examiner')) { throw '심사관 역할이 필요합니다.' }
+    Assert-WPeriod $Period
+    Assert-WId $RequestId '저장 요청 ID'
+    # Drafts may contain unfinished/invalid numbers. Confirmation validates the entire list before publishing any case.
+    $clean = @(foreach ($row in $Rows) {
+        [pscustomobject]@{applicationNumber=(Convert-WOptionalText (Get-WValue $row 'applicationNumber' '') '출원번호' 100);cpc=(Convert-WOptionalText (Get-WValue $row 'cpc' '') 'CPC' 500)}
+    })
+    $fingerprint = Get-WFingerprint @{operation='SaveTargetSelection';period=$Period;userId=$user.userId;expectedVersion=$ExpectedVersion;status=$Status;rows=$clean}
+    $lock = Join-Path $Context.root ('Locks\{0}\registration-{1}.lock' -f $Period, $user.userId)
+    return Invoke-WPeriodReadLock $Context $Period {
+      Invoke-FileLock -Path $lock -Action {
+        $user = Assert-WContext $Context
+        if (-not (Test-WRole $user 'examiner')) { throw '심사관 역할이 필요합니다.' }
+        $path = Get-WSelectionPath $Context $Period $user.userId
+        $previous = Read-Revision -Path $path
+        $oldRequest = @(Get-Revisions -Path $path | Where-Object {$_.requestId -eq $RequestId}) | Select-Object -First 1
+        if ($oldRequest) { Assert-WRequest $oldRequest $fingerprint $user.userId; return Convert-WRecord $oldRequest $path }
+        $currentVersion = if ($previous) {[int]$previous.version} else {0}
+        if ($currentVersion -ne $ExpectedVersion) { throw '다른 창에서 대상건이 변경되었습니다. 새로 고침 후 다시 확인하십시오.' }
+        if ($previous -and $previous.data.status -eq 'Confirmed') { throw '이미 대상건이 확정된 운영월입니다.' }
+        $settings = Get-Period $Context $Period
+        Assert-WOpen $settings Submission
+        $member = Get-WMember $settings $user.userId
+        if (-not $member) { throw '해당 월 참여 심사관이 아닙니다.' }
+        $existing = @(Get-Cases $Context $Period Mine | Where-Object {$_.status -ne 'Cancelled'})
+        if ($existing.Count) { throw '이미 대상건이 확정된 운영월입니다.' }
+        $caseIds = @()
+        if ($Status -eq 'Confirmed') {
+            if (-not $clean.Count) { throw '확정할 대상건을 한 건 이상 입력하십시오.' }
+            $limit = [int](Get-WValue $settings 'submissionLimit' 0)
+            if ($limit -gt 0 -and $clean.Count -gt $limit) { throw '월별 제출 건수 상한을 초과했습니다.' }
+            $seen = @{}
+            foreach ($row in $clean) {
+                $row.applicationNumber = Convert-WApplicationNumber $row.applicationNumber
+                if ($seen.ContainsKey($row.applicationNumber)) { throw '대상건 목록에 중복된 출원번호가 있습니다.' }
+                $seen[$row.applicationNumber] = $true
+            }
+            $index = 0
+            foreach ($row in $clean) {
+                $caseId = 'C' + (Get-WFingerprint @{userId=$user.userId;period=$Period;request=$RequestId;index=$index}).Substring(0,32)
+                $index++
+                $data = [pscustomobject]@{caseId=$caseId;period=$Period;groupId=$member.groupId;userId=$user.userId;examinerName=$user.name;
+                    examinerBureau=[string](Get-WValue $user 'bureau' '');examinerDivision=[string](Get-WValue $user 'division' '');
+                    applicationNumber=$row.applicationNumber;cpc=$row.cpc;status='Submitted';submittedAt=[datetimeoffset]::UtcNow.ToString('o');duplicateWarning=$false;
+                    selectionRequestId=$RequestId;requestFingerprint=$fingerprint}
+                $casePath = Get-WCasePath $Context $data
+                $data.duplicateWarning=Test-WOtherSubmission $Context $Period $user.userId $row.applicationNumber
+                $prepared = Read-Revision -Path $casePath
+                if ($prepared) { Assert-WRequest $prepared $fingerprint $user.userId }
+                else { $null = Write-Revision -Path $casePath -ExpectedVersion 0 -RequestId $RequestId -ActorId $user.userId -Data $data -Kind Submission -TargetId $caseId }
+                $caseIds += $caseId
+            }
+        }
+        # This one immutable revision publishes the entire set. Interrupted preparation remains invisible and retryable.
+        $data = [pscustomobject]@{period=$Period;userId=$user.userId;groupId=$member.groupId;status=$Status;rows=$clean;caseIds=$caseIds;requestFingerprint=$fingerprint}
+        $saved = Write-Revision -Path $path -ExpectedVersion $ExpectedVersion -RequestId $RequestId -ActorId $user.userId -Data $data -Kind TargetSelection -TargetId $user.userId
+        return Convert-WRecord $saved $path
+      }
+    }
 }
 
 function New-Submission {
@@ -422,6 +536,7 @@ function New-Submission {
                 }
             }
         }
+        if (Read-Revision -Path (Get-WSelectionPath $Context $Period $user.userId)) { throw '월별 대상건 선정 화면에서 임시저장 또는 확정하십시오.' }
         Assert-WOpen $settings 'Submission'
         if (@($existing | Where-Object { $_.applicationNumber -eq $number -and $_.status -ne 'Cancelled' }).Count -gt 0) { throw '본인이 해당 월에 이미 제출한 출원번호입니다.' }
         $limit = [int](Get-WValue $settings 'submissionLimit' 0)
@@ -441,7 +556,7 @@ function New-Submission {
                     try {
                         foreach ($folder in Get-ChildItem -LiteralPath $owner.FullName -Directory -ErrorAction Stop) {
                             $other = Read-Revision -Path $folder.FullName
-                            if ($null -ne $other -and $other.data.applicationNumber -eq $number -and $other.data.status -ne 'Cancelled') { $data.duplicateWarning = $true }
+                            if ($null -ne $other -and $other.data.applicationNumber -eq $number -and $other.data.status -ne 'Cancelled' -and (Test-WSelectionPublished $Context $other.data)) { $data.duplicateWarning = $true }
                         }
                     } catch [System.UnauthorizedAccessException] { }
                 }
@@ -830,7 +945,10 @@ function Get-CaseStatus {
     }
     $evaluationState = 'NotEvaluated'
     if ($evaluation) { $evaluationState = 'Partial'; if ($evaluation.data.complete) { $evaluationState = 'Complete' }; if ($evaluation.needsReconfirmation) { $evaluationState = 'NeedsReconfirmation' } }
-    return [pscustomobject]@{ caseId = $actual.caseId; submissionStatus = $actual.status; deliveries = @($states); evaluationStatus = $evaluationState }
+    $aiStates = @($states | Where-Object {$sourceMap.ContainsKey($_.sourceId) -and $sourceMap[$_.sourceId].type -eq 'AI'})
+    $aiCompleted = @($aiStates | Where-Object {$_.publishedVersion -gt 0}).Count
+    $label = if ($aiStates.Count -gt 0 -and $aiCompleted -eq $aiStates.Count) {'납품 완료'} else {'대기 중'}
+    return [pscustomobject]@{ caseId = $actual.caseId; submissionStatus = $actual.status; deliveries = @($states); evaluationStatus = $evaluationState; deliveryStatusLabel=$label; aiCompleted=$aiCompleted; aiTotal=$aiStates.Count }
 }
 
 function Set-PeriodStatus {
@@ -1030,4 +1148,4 @@ function Initialize-Demo {
     return Get-Context -Root $rootPath
 }
 
-Export-ModuleMember -Function Initialize-Demo,Get-Context,Get-LoginUsers,New-User,Get-Periods,Get-Users,Get-Groups,Get-Sources,Get-Period,Get-Cases,New-Submission,Cancel-Submission,Get-Deliveries,Get-DeliveryForEdit,Get-DeliveryHistory,Save-Delivery,Import-DeliveryAttachment,Resolve-DeliveryAttachment,Get-Evaluation,Save-Evaluation,Get-CaseStatus,Set-PeriodStatus,Save-MasterRecord,Save-Period
+Export-ModuleMember -Function Initialize-Demo,Get-Context,Get-LoginUsers,New-User,Get-Periods,Get-Users,Get-Groups,Get-Sources,Get-Period,Get-Cases,Get-TargetSelection,Save-TargetSelection,New-Submission,Cancel-Submission,Get-Deliveries,Get-DeliveryForEdit,Get-DeliveryHistory,Save-Delivery,Import-DeliveryAttachment,Resolve-DeliveryAttachment,Get-Evaluation,Save-Evaluation,Get-CaseStatus,Set-PeriodStatus,Save-MasterRecord,Save-Period

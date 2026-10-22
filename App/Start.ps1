@@ -5,6 +5,7 @@
     [switch]$SmokeTest,
     [switch]$ExerciseUiWrites,
     [switch]$ExerciseWorkspaceSwitch,
+    [ValidateSet('','Draft','Confirm')][string]$ExerciseTargetSelection='',
     [string]$ScreenshotPath,
     [string]$SmokeLoginUserId = 'U001',
     [string]$SmokeReportPath
@@ -12,6 +13,7 @@
 $ErrorActionPreference = 'Stop'
 if ($ExerciseUiWrites -and (-not $SmokeTest -or -not $Demo)) {throw '화면 쓰기 검증은 -Demo -SmokeTest에서만 실행할 수 있습니다.'}
 if ($ExerciseWorkspaceSwitch -and (-not $SmokeTest -or -not $Demo)) {throw '업무 전환 검증은 -Demo -SmokeTest에서만 실행할 수 있습니다.'}
+if ($ExerciseTargetSelection -and (-not $SmokeTest -or -not $Demo)) {throw '대상건 검증은 -Demo -SmokeTest에서만 실행할 수 있습니다.'}
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'PowerShell을 -STA 옵션으로 실행하세요.' }
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 $script:appDirectory = $PSScriptRoot
@@ -81,6 +83,7 @@ try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $r
 $script:ui = @{}
 $names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','EditVersionText','NoResultsCheck','NoResultsReasonBox','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','HistoryButton','DeliveryReasonBox','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','EvaluationReasonBox','SaveEvaluationButton','EvaluationVersionText','AdminTab','AdminContentHost','ModeText','StatusText')
 $names += 'CaseExportButton'
+$names += @('CaseSidebar','CaseSidebarColumn','CaseGapColumn','CaseSplitter','SelectionDraftButton','SelectionHelpText')
 $names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','SwitchUserButton','PersonalWorkTab','PersonalTabs','TargetSelectionTab','EvaluationTab','EvaluationTabs','ResultNumbersBox','AddResultNumbersButton','CaseStateCombo','CasesEmptyText','GoEvaluationButton','DocumentCountText','DeliveryReasonExpander','CaseListTitleText','CaseListHintText','WorkflowHintText')
 foreach ($name in $names) { $script:ui[$name] = $window.FindName($name) }
 $script:busy = $false
@@ -111,6 +114,9 @@ $script:activeWorkspace=''
 $script:workspaceCases=@{Personal='';AI='';Admin=''}
 $script:workspaceFilters=@{}
 $script:caseDetailLoaded=$false
+$script:targetSelection=$null
+$script:selectionLoadedKey=''
+$script:selectionBaselineStamp='[]'
 
 function Set-Status([string]$Message) { $ui.StatusText.Text = $Message }
 function Update-ActionAvailability {
@@ -129,6 +135,9 @@ function Update-ActionAvailability {
     $ui.RatingsGrid.IsReadOnly=-not $own;$ui.RankGrid.IsReadOnly=-not $own
     $ui.EvaluationReasonBox.IsEnabled=$own
     $ui.SubmitButton.IsEnabled='examiner' -in $context.User.roles -and $script:loadedPeriod.status -ne 'Closed'
+    $canSelect=$ui.SubmitButton.IsEnabled -and ($AdminMode -or ($script:targetSelection -and $script:targetSelection.status -ne 'Confirmed'))
+    foreach ($name in @('SubmitButton','SelectionDraftButton','ApplicationNumberBox','CpcBox','SubmissionBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton')) {$ui[$name].IsEnabled=[bool]$canSelect}
+    $ui.SubmissionRowsGrid.IsReadOnly=-not $canSelect
     $ui.DocumentCountText.Text="$($script:documents.Count) / 7건"
     $ui.ScopeCombo.IsEnabled=$false
 }
@@ -162,7 +171,52 @@ function Confirm-Discard {
     return ([Windows.MessageBox]::Show($window,'저장하지 않은 입력을 버리고 이동할까요?','입력내용 확인','YesNo','Question') -eq 'Yes')
 }
 function Has-PendingSubmissions {
-    return $script:submissionRows.Count -gt 0 -or -not [string]::IsNullOrWhiteSpace($ui.ApplicationNumberBox.Text) -or -not [string]::IsNullOrWhiteSpace($ui.CpcBox.Text) -or -not [string]::IsNullOrWhiteSpace($ui.SubmissionBox.Text)
+    $changed=if ($AdminMode) {$script:submissionRows.Count -gt 0} else {(Get-SelectionInputStamp) -cne $script:selectionBaselineStamp}
+    return $changed -or -not [string]::IsNullOrWhiteSpace($ui.ApplicationNumberBox.Text) -or -not [string]::IsNullOrWhiteSpace($ui.CpcBox.Text) -or -not [string]::IsNullOrWhiteSpace($ui.SubmissionBox.Text)
+}
+function Get-SelectionInputStamp {
+    return ConvertTo-Json -InputObject @($script:submissionRows | ForEach-Object {[ordered]@{applicationNumber=[string]$_.applicationNumber;cpc=[string]$_.cpc}}) -Compress
+}
+function Set-SelectionStage {
+    $previous=$script:changing;$script:changing=$true
+    $confirmed=$script:targetSelection -and $script:targetSelection.status -eq 'Confirmed'
+    $ui.TargetSelectionTab.Visibility=if ($AdminMode -or -not $confirmed) {'Visible'} else {'Collapsed'}
+    $ui.EvaluationTab.Visibility=if ($AdminMode -or $confirmed) {'Visible'} else {'Collapsed'}
+    $ui.SelectionDraftButton.Visibility=if ($AdminMode) {'Collapsed'} else {'Visible'}
+    $ui.CancelSubmissionButton.Visibility=if ($AdminMode) {'Visible'} else {'Collapsed'}
+    $ui.SubmitButton.Content=if ($AdminMode) {'출원 등록'} else {'대상건 확정'}
+    $ui.SelectionHelpText.Text=if ($AdminMode) {'출원번호와 CPC를 입력한 뒤 출원 등록을 누르세요.'} else {'이번 운영월의 출원번호와 CPC를 입력하세요. 임시저장 후 이어서 수정할 수 있으며, 대상건 확정 후 평가 단계로 이동합니다.'}
+    foreach ($tabs in @($ui.PersonalTabs,$ui.EvaluationTabs)) {
+        if ($AdminMode) {$tabs.ClearValue([Windows.Controls.Control]::TemplateProperty)} else {$tabs.Template=$window.Resources['ContentOnlyTabs']}
+        $tabs.Margin=if ($AdminMode) {12} else {0}
+    }
+    if (-not $AdminMode -and 'ai' -notin $context.User.roles) {$ui.MainTabs.Template=$window.Resources['ContentOnlyTabs']} else {$ui.MainTabs.ClearValue([Windows.Controls.Control]::TemplateProperty)}
+    if (-not $AdminMode) {
+        $ui.PersonalTabs.SelectedItem=if ($confirmed) {$ui.EvaluationTab} else {$ui.TargetSelectionTab}
+        $ui.EvaluationTabs.SelectedIndex=1
+    }
+    $script:changing=$previous
+    Set-WorkspacePresentation
+}
+function Save-SelectionEditor([string]$Status) {
+    Add-SubmissionInputRows
+    [void]$ui.SubmissionRowsGrid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true)
+    [void]$ui.SubmissionRowsGrid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)
+    $period=Get-SelectedPeriod
+    $rows=@($script:submissionRows | ForEach-Object {[pscustomobject]@{applicationNumber=[string]$_.applicationNumber;cpc=[string]$_.cpc}})
+    $expected=if ($script:targetSelection) {[int]$script:targetSelection.version} else {0}
+    $request=Get-Request "selection:$period" @{expected=$expected;status=$Status;rows=$rows}
+    Set-Status '운영월별 대상건 저장 중…'
+    Invoke-UiWork -Work {
+        param($ctx,$period,$expected,$request,$status,$rows)
+        Save-TargetSelection -Context $ctx -Period $period -ExpectedVersion $expected -RequestId $request -Status $status -Rows $rows
+    } -Arguments @($context,$period,$expected,$request,$Status,$rows) -Completed {
+        param($result)
+        $script:targetSelection=$result[0]
+        $script:selectionBaselineStamp=Get-SelectionInputStamp
+        $ui.SubmissionResult.Text=if ($script:targetSelection.status -eq 'Confirmed') {'대상건 확정 완료'} else {'임시저장 완료 · 다음 로그인에서도 이어서 수정할 수 있습니다.'}
+        if ($script:targetSelection.status -eq 'Confirmed') {Set-SelectionStage;Load-Cases} else {Set-Status $ui.SubmissionResult.Text}
+    }
 }
 function Save-TestScreenshot([string]$Suffix='') {
     if (-not $ScreenshotPath) {return}
@@ -271,12 +325,20 @@ function Set-WorkspacePresentation {
     $previous=$script:changing;$script:changing=$true
     $ui.ScopeCombo.ItemsSource=@([pscustomobject]@{id=$scope;name=$name});$ui.ScopeCombo.SelectedIndex=0;$ui.ScopeCombo.IsEnabled=$false
     $script:changing=$previous
+    $selectionOnly=-not $AdminMode -and $script:activeWorkspace -eq 'Personal' -and (-not $script:targetSelection -or $script:targetSelection.status -ne 'Confirmed')
+    $ui.CaseSidebar.Visibility=if ($selectionOnly) {'Collapsed'} else {'Visible'}
+    $ui.CaseSplitter.Visibility=$ui.CaseSidebar.Visibility
+    $ui.CaseSidebarColumn.MinWidth=if ($selectionOnly) {0} else {290}
+    $ui.CaseSidebarColumn.Width=if ($selectionOnly) {0} else {340}
+    $ui.CaseGapColumn.Width=if ($selectionOnly) {0} else {14}
+    $ui.CasesGrid.Columns[1].Visibility=if ($script:activeWorkspace -eq 'Personal') {'Collapsed'} else {'Visible'}
     switch ($script:activeWorkspace) {
         'Personal' {
             $selection=$ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab
-            $ui.CaseListTitleText.Text=if ($selection) {'내 선정 대상건'} else {'내 평가 대상건'}
+            $ui.CaseListTitleText.Text=if ($selection) {'내 선정 대상건'} else {'내 평가 대상 건'}
             $ui.CaseListHintText.Text=if ($selection) {'본인 출원을 등록·선정하는 단계입니다.'} else {'본인이 선정한 출원의 결과를 평가합니다.'}
-            $ui.WorkflowHintText.Text=if ($selection) {'1. 대상건 선정 · 출원번호와 CPC를 등록합니다. 평가는 2단계에서 진행하세요.'} else {'2. AI 검색 결과 평가 · 등록된 결과를 조회하고 문헌·품질 순위를 평가합니다.'}
+            $ui.WorkflowHintText.Text=if ($selection) {'1. 대상건 선정 · 임시저장한 목록을 검토한 뒤 대상건을 확정하세요.'} else {'2. AI 검색 결과 평가 · 왼쪽 출원번호를 클릭하면 바로 평가할 수 있습니다. 납품 완료는 이번 달 AI 결과가 모두 도착한 상태입니다.'}
+            if ($selectionOnly) {$ui.CaseTitle.Text=(Get-UiValue $script:loadedPeriod 'period' '')+' 대상건 선정';$ui.CaseMetadataText.Text='';$ui.CaseSubtitle.Text='출원번호 · CPC 입력 → 임시저장 → 대상건 확정'}
             $ui.CasesEmptyText.Text=if ($selection) {"선정한 출원이 없습니다.`n출원번호와 CPC를 등록하세요."} else {"평가할 본인 출원이 없습니다.`n1. 대상건 선정에서 출원을 등록하세요."}
         }
         'AI' {
@@ -319,6 +381,7 @@ function Select-Workspace([ValidateSet('Selection','Evaluation','AI','Admin')][s
     if ($tab.Visibility -ne 'Visible') {throw '현재 역할에서 사용할 수 없는 업무입니다.'}
     if ($Name -in @('Selection','Evaluation')) {
         $step=if ($Name -eq 'Selection') {$ui.TargetSelectionTab} else {$ui.EvaluationTab}
+        if ($step.Visibility -ne 'Visible') {$step=if ($script:targetSelection -and $script:targetSelection.status -eq 'Confirmed') {$ui.EvaluationTab} else {$ui.TargetSelectionTab}}
         if ($ui.MainTabs.SelectedItem -eq $ui.PersonalWorkTab) {$ui.PersonalTabs.SelectedItem=$step}
         else {$previous=$script:changing;$script:changing=$true;$ui.PersonalTabs.SelectedItem=$step;$script:changing=$previous}
         if ($Name -eq 'Evaluation') {$ui.EvaluationTabs.SelectedIndex=1}
@@ -393,18 +456,38 @@ function Load-Cases([string]$SelectCaseId='') {
     Set-Status '출원 및 월 운영정보 조회 중…'
     Invoke-UiWork -Work {
         param($ctx,$month,$scope)
-        [pscustomobject]@{cases=@(Get-Cases -Context $ctx -Period $month -Scope $scope);period=(Get-Period -Context $ctx -Period $month);sources=@(Get-Sources -Context $ctx);groups=@(Get-Groups -Context $ctx)}
+        $cases=@(Get-Cases -Context $ctx -Period $month -Scope $scope)
+        if ($scope -eq 'Mine') {foreach ($case in $cases) {
+            $progress=Get-CaseStatus -Context $ctx -Case $case
+            $case | Add-Member -NotePropertyName deliveryStatusLabel -NotePropertyValue $progress.deliveryStatusLabel
+            $case | Add-Member -NotePropertyName deliveryHint -NotePropertyValue ("AI 납품 $($progress.aiCompleted) / $($progress.aiTotal)")
+        }}
+        $selection=$null;if ('examiner' -in $ctx.User.roles) {$selection=Get-TargetSelection -Context $ctx -Period $month}
+        [pscustomobject]@{cases=$cases;selection=$selection;period=(Get-Period -Context $ctx -Period $month);sources=@(Get-Sources -Context $ctx);groups=@(Get-Groups -Context $ctx)}
     } -Arguments @($context,$period,$scope) -Completed {
         param($result)
         $snapshot=$result[0]; $script:loadedPeriod=$snapshot.period
         $script:cases=@($snapshot.cases)
         foreach ($case in $script:cases) {
-            $case | Add-Member -NotePropertyName statusLabel -NotePropertyValue $(if ($case.status -eq 'Cancelled') {'취소'} elseif ($case.duplicateWarning) {'중복 확인'} else {'접수'}) -Force
+            $case | Add-Member -NotePropertyName statusLabel -NotePropertyValue $(if ($case.status -eq 'Cancelled') {'취소'} elseif ($script:activeWorkspace -eq 'Personal') {$case.deliveryStatusLabel} elseif ($case.duplicateWarning) {'중복 확인'} else {'접수'}) -Force
             $case | Add-Member -NotePropertyName caseHint -NotePropertyValue ("CPC: "+(Get-UiValue $case 'cpc')+"`n"+(Get-UiValue $case 'examinerBureau')+' / '+(Get-UiValue $case 'examinerDivision')) -Force
         }
         $script:allSources=@($snapshot.sources)
         $script:allGroups=@($snapshot.groups)
         $script:changing=$true
+        if (-not $AdminMode) {
+            $key=$context.User.userId+':'+$script:loadedPeriod.period
+            if ($key -ne $script:selectionLoadedKey -or (-not (Has-PendingSubmissions) -and $snapshot.selection.version -ne $script:targetSelection.version)) {
+                $script:targetSelection=$snapshot.selection;$script:selectionLoadedKey=$key
+                $script:submissionRows.Clear();$ui.ApplicationNumberBox.Clear();$ui.CpcBox.Clear();$ui.SubmissionBox.Clear()
+                if ($script:targetSelection -and $script:targetSelection.status -eq 'Draft') {foreach ($row in $script:targetSelection.rows) {
+                    $script:submissionRows.Add([pscustomobject]@{rowKey=[guid]::NewGuid().ToString('N');applicationNumber=$row.applicationNumber;cpc=$row.cpc;message=''})
+                }}
+                $script:selectionBaselineStamp=Get-SelectionInputStamp
+                $ui.SubmissionResult.Text=if ($script:targetSelection -and $script:targetSelection.status -eq 'Draft') {'저장한 대상건 초안을 불러왔습니다.'} else {''}
+            } elseif (-not (Has-PendingSubmissions)) {$script:targetSelection=$snapshot.selection}
+        }
+        Set-SelectionStage
         $ui.SourceCombo.ItemsSource=@()
         Update-Filter
         $script:changing=$false
@@ -449,6 +532,10 @@ function Show-CaseDetail($Case) {
         param($result)
         $snapshot=$result[0]
         $script:changing=$true
+        if ($script:activeWorkspace -eq 'Personal') {
+            $script:selectedCase.statusLabel=if ($script:selectedCase.status -eq 'Cancelled') {'취소'} else {$snapshot.progress.deliveryStatusLabel}
+            $ui.CasesGrid.Items.Refresh()
+        }
         $script:deliveryEdit=$null; $script:loadedSource=$null; $script:documents.Clear(); $ui.EditVersionText.Text='편집 자료를 불러오세요'
         $script:published=@($snapshot.deliveries); $script:evaluation=$snapshot.evaluation
         $editable=@($script:allSources | Where-Object {
@@ -493,7 +580,7 @@ function Initialize-EvaluationRows {
         $choice=''; if ($delivery.data.noResults) {$choice='결과 없음'} elseif ($prior.Count) {
             switch ($prior[0].status) { 'Ranked' {$choice=[string]$prior[0].rank}; 'Outside' {$choice='순위 외'}; 'Excluded' {$choice='평가 제외'}; 'Incomparable' {$choice='비교 불가'} }
         }
-        $script:ranks.Add([pscustomobject]@{sourceId=$delivery.data.sourceId;sourceName=$delivery.data.sourceName;deliveryVersion=$delivery.version;choice=$choice;noResults=[bool]$delivery.data.noResults})
+        $script:ranks.Add([pscustomobject]@{sourceId=$delivery.data.sourceId;sourceName=$delivery.data.sourceName;deliveryVersion=$delivery.version;deliveryVersionLabel=([string]$delivery.version+'판');choice=$choice;noResults=[bool]$delivery.data.noResults;notDelivered=$false})
         foreach ($doc in @($delivery.data.documents)) {
             $priorRating=@(); if ($old) { $priorRating=@($old.documentRatings | Where-Object {$_.sourceId -eq $delivery.data.sourceId -and $_.documentId -eq $doc.documentId}) }
             $score='';$cited='';$note=''
@@ -501,8 +588,16 @@ function Initialize-EvaluationRows {
             $script:ratings.Add([pscustomobject]@{sourceId=$delivery.data.sourceId;sourceName=$delivery.data.sourceName;documentId=$doc.documentId;identifier=$doc.identifier;title=$doc.title;scoreText=$score;citedText=$cited;note=$note})
         }
     }
+    # Show every comparison method, including the general prior-art search before it is delivered.
+    foreach ($source in @($script:allSources | Where-Object {$_.sourceId -in $script:loadedPeriod.sourceIds -or $_.type -eq 'General'})) {
+        if ($source.sourceId -notin @($script:ranks | ForEach-Object {$_.sourceId})) {
+            $script:ranks.Add([pscustomobject]@{sourceId=$source.sourceId;sourceName=$source.name;deliveryVersion=0;deliveryVersionLabel='—';choice='대기 중';noResults=$false;notDelivered=$true})
+        }
+    }
+    $ordered=@($script:ranks | Sort-Object @{Expression={if ($_.sourceId -in @($script:allSources | Where-Object {$_.type -eq 'General'} | ForEach-Object {$_.sourceId})) {0} else {1}}},sourceId)
+    $script:ranks.Clear();foreach ($rank in $ordered) {$script:ranks.Add($rank)}
     $ui.EvaluationVersionText.Text=if ($script:evaluation) {"평가 $($script:evaluation.version)판"} else {'평가 저장 전'}
-    $ui.EvaluationStateText.Text=if ($stale) {'재확인 필요: 납품 판이 변경되었습니다. 문헌 평가와 전체 순위를 확인한 뒤 저장하세요.'} elseif ($own) {'점수와 인용 여부의 공란은 미평가입니다. 0점과 X는 실제 평가값으로 저장합니다.'} else {'본인 출원의 평가만 입력할 수 있습니다.'}
+    $ui.EvaluationStateText.Text=if ($stale) {'재확인 필요: 납품 판이 변경되었습니다. 문헌 평가와 전체 순위를 확인한 뒤 저장하세요.'} elseif ($own) {'선행기술조사와 AI 결과 묶음을 비교해 순위를 선택하세요. 대기 중인 방식은 납품 후 평가할 수 있습니다.'} else {'본인 출원의 평가만 입력할 수 있습니다.'}
     $script:evalBaselineStamp=Get-EvaluationInputStamp
 }
 function Load-DeliveryEditor {
@@ -577,6 +672,7 @@ function Save-EvaluationEditor {
         [pscustomobject]@{sourceId=$row.sourceId;documentId=$row.documentId;score=$score;cited=$cited;note=$row.note}
     })
     $rankingRows=@(foreach ($row in $script:ranks) {
+        if ($row.notDelivered) {continue}
         if ([string]::IsNullOrWhiteSpace($row.choice)) {continue}
         $rank=$null
         $state=switch ($row.choice) {'1' {$rank=1;'Ranked'};'2' {$rank=2;'Ranked'};'3' {$rank=3;'Ranked'};'순위 외' {'Outside'};'평가 제외' {'Excluded'};'비교 불가' {'Incomparable'};'결과 없음' {if (-not $row.noResults) {throw '문헌이 있는 납품에 결과 없음을 지정할 수 없습니다.'};'NoResults'};'' {'Excluded'};default {throw '순위는 1, 2, 3, 순위 외, 평가 제외, 비교 불가 중 입력하세요.'}}
@@ -627,13 +723,14 @@ function Set-SessionControls {
     $ui.PersonalWorkTab.Visibility=if ('examiner' -in $context.User.roles) {'Visible'} else {'Collapsed'}
     $ui.DeliveryTab.Visibility=if ('ai' -in $context.User.roles -or 'admin' -in $context.User.roles) {'Visible'} else {'Collapsed'}
     $script:workspaceCases=@{Personal='';AI='';Admin=''};$script:workspaceFilters=@{}
+    $script:selectionLoadedKey='';$script:targetSelection=$null;$script:selectionBaselineStamp=Get-SelectionInputStamp
     $ui.SearchBox.Clear();$ui.CaseStateCombo.SelectedIndex=0
     $ui.PeriodCombo.ItemsSource=@(Get-Periods -Context $context);$ui.PeriodCombo.SelectedIndex=0
     Reset-AdminEditor
     $ui.PersonalTabs.SelectedItem=$ui.TargetSelectionTab;$ui.EvaluationTabs.SelectedIndex=1
     $ui.MainTabs.SelectedItem=if ($AdminMode) {$ui.AdminTab} elseif ('examiner' -in $context.User.roles) {$ui.PersonalWorkTab} else {$ui.DeliveryTab}
     $script:activeWorkspace=Get-CurrentWorkspace;$script:lastMainTab=$ui.MainTabs.SelectedItem
-    Set-WorkspacePresentation
+    Set-SelectionStage
     $script:requests=@{};$script:adminDirty=$false;$script:changing=$false
 }
 Set-SessionControls
@@ -653,11 +750,16 @@ $ui.SwitchUserButton.Add_Click({Invoke-UiAction {
         Set-SessionControls;Load-Cases
     }
 }})
-$ui.RefreshButton.Add_Click({Invoke-UiAction {if (Confirm-Discard) {Load-Cases}}})
+$ui.RefreshButton.Add_Click({Invoke-UiAction {
+    if (-not (Confirm-Discard)) {return}
+    if (-not $AdminMode -and (Has-PendingSubmissions) -and [Windows.MessageBox]::Show($window,'임시저장하지 않은 대상건 변경을 버리고 저장된 목록을 불러올까요?','새로 고침','YesNo','Question') -ne 'Yes') {return}
+    if (-not $AdminMode) {$script:selectionLoadedKey=''}
+    Load-Cases
+}})
 $ui.PeriodCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Invoke-UiAction {
     $canChange=Confirm-Discard
-    if ($canChange -and (Has-PendingSubmissions)) {$canChange=[Windows.MessageBox]::Show($window,'등록 전 출원 입력이 있습니다. 입력내용을 유지하고 새 운영월로 이동할까요?','등록 대상 월 확인','YesNo','Question') -eq 'Yes'}
-    if ($canChange) {Load-Cases} else {$script:changing=$true;$ui.PeriodCombo.SelectedItem=$script:lastPeriod;$script:changing=$false}
+    if ($canChange -and (Has-PendingSubmissions)) {$canChange=[Windows.MessageBox]::Show($window,'임시저장하지 않은 대상건 변경을 버리고 운영월을 바꿀까요?','운영월 변경','YesNo','Question') -eq 'Yes'}
+    if ($canChange) {$script:selectionLoadedKey='';Load-Cases} else {$script:changing=$true;$ui.PeriodCombo.SelectedItem=$script:lastPeriod;$script:changing=$false}
 }}})
 $ui.SearchBox.Add_TextChanged({if (-not $script:changing) {Update-Filter}})
 $ui.CaseStateCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Update-Filter}})
@@ -667,6 +769,7 @@ $ui.CasesGrid.Add_SelectionChanged({
     Invoke-UiAction {if (Confirm-Discard) {Show-CaseDetail $ui.CasesGrid.SelectedItem} else {$script:changing=$true;$ui.CasesGrid.SelectedItem=$script:lastCase;$script:changing=$false}}
 })
 $ui.SubmitButton.Add_Click({Invoke-UiAction {
+    if (-not $AdminMode) {Save-SelectionEditor Confirmed;return}
     if (-not (Confirm-Discard)) {return}
     $period=Get-SelectedPeriod
     Add-SubmissionInputRows
@@ -691,6 +794,7 @@ $ui.SubmitButton.Add_Click({Invoke-UiAction {
         Load-Cases
     }
 }})
+$ui.SelectionDraftButton.Add_Click({Invoke-UiAction {Save-SelectionEditor Draft}})
 $ui.AddSubmissionRowButton.Add_Click({Invoke-UiAction {Add-SubmissionInputRows $true $false}})
 $ui.AddPastedRowsButton.Add_Click({Invoke-UiAction {Add-SubmissionInputRows $false $true}})
 $ui.RemoveSubmissionRowButton.Add_Click({if ($ui.SubmissionRowsGrid.SelectedItem) {[void]$script:submissionRows.Remove($ui.SubmissionRowsGrid.SelectedItem)}})
@@ -776,6 +880,46 @@ if ($SmokeTest) {
     $script:smokeSelected=$false;$script:smokeStage=0;$script:selectionStepPreserved=$false
     $script:smokeTimer.Add_Tick({
         if ($script:busy) {return}
+        if ($ExerciseTargetSelection -and -not $script:smokeFailure -and $script:smokeStage -lt 3) {
+            Invoke-UiAction {
+                switch ($script:smokeStage) {
+                    0 {
+                        if ($ui.PersonalTabs.SelectedItem -ne $ui.TargetSelectionTab -or $ui.EvaluationTab.Visibility -ne 'Collapsed' -or $ui.CaseSidebar.Visibility -ne 'Collapsed' -or $ui.DeliveryTab.Visibility -ne 'Collapsed') {throw '미확정 심사관에게 대상건 선정 화면만 표시되지 않았습니다.'}
+                        if ($ExerciseTargetSelection -eq 'Draft') {
+                            if ($script:submissionRows.Count -ne 0) {throw '신규 월의 대상건 목록이 비어 있지 않습니다.'}
+                            $ui.ApplicationNumberBox.Text='10-2026-0000888';$ui.CpcBox.Text='G06F 16/00'
+                            $ui.SelectionDraftButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        } else {
+                            if ($script:submissionRows.Count -ne 1 -or $script:submissionRows[0].cpc -ne 'G06F 16/00') {throw '다시 로그인한 뒤 운영월의 초안이 복원되지 않았습니다.'}
+                            $ui.SubmitButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        }
+                    }
+                    1 {
+                        if ($ExerciseTargetSelection -eq 'Draft') {
+                            if ($script:targetSelection.status -ne 'Draft' -or (Has-PendingSubmissions) -or $script:cases.Count -ne 0) {throw '초안 저장 또는 미확정 건 숨김이 적용되지 않았습니다.'}
+                        } else {
+                            if ($ui.PersonalTabs.SelectedItem -ne $ui.EvaluationTab -or $ui.TargetSelectionTab.Visibility -ne 'Collapsed' -or $ui.CaseSidebar.Visibility -ne 'Visible' -or $script:cases.Count -ne 1) {throw '확정 뒤 평가 화면으로 전환되지 않았습니다.'}
+                            if ($script:cases[0].statusLabel -ne '대기 중' -or (@($script:ranks.sourceId) -join '|') -ne 'S01|S02|S03') {throw '납품 대기 상태 또는 전체 조사 방식이 표시되지 않았습니다.'}
+                            $window.UpdateLayout()
+                            if ($ui.RatingsGrid.ActualHeight -le $ui.RankGrid.ActualHeight) {throw '문헌별 평가 영역이 품질 순위 영역보다 높지 않습니다.'}
+                            $script:smokeOriginalWidth=$window.Width;$script:smokeOriginalHeight=$window.Height
+                            $window.Width=$window.MinWidth;$window.Height=$window.MinHeight;$window.UpdateLayout()
+                            $savePoint=$ui.SaveEvaluationButton.TranslatePoint((New-Object Windows.Point(0,0)),$window)
+                            if ($ui.RatingsGrid.ActualHeight -le $ui.RankGrid.ActualHeight -or $savePoint.Y+$ui.SaveEvaluationButton.ActualHeight -gt $window.ActualHeight-30) {throw '최소 창 크기에서 문헌 평가 영역이나 저장 버튼이 잘립니다.'}
+                        }
+                        $script:selectionFlowVerified=$true
+                    }
+                    2 {
+                        if ($ExerciseTargetSelection -eq 'Confirm') {
+                            Save-TestScreenshot '-Small'
+                            $window.Width=$script:smokeOriginalWidth;$window.Height=$script:smokeOriginalHeight;$window.UpdateLayout()
+                        }
+                    }
+                }
+                $script:smokeStage++
+            }
+            return
+        }
         if (-not $script:smokeSelected -and $ui.CasesGrid.Items.Count -gt 0 -and -not $script:smokeFailure) {
             $script:smokeSelected=$true;$ui.CasesGrid.SelectedIndex=0
             $script:selectionStepPreserved=$script:activeWorkspace -eq 'Personal' -and $ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab
@@ -870,7 +1014,6 @@ if ($SmokeTest) {
                 switch ($script:smokeStage) {
                     0 {
                         $script:personalCaseIds=@($script:cases | ForEach-Object {$_.caseId});$script:personalScope=Get-WorkspaceScope
-                        $ui.ApplicationNumberBox.Text='10-2026-0000999';$ui.CpcBox.Text='G06N 3/00'
                         Select-Workspace 'Evaluation'
                     }
                     1 {
@@ -892,8 +1035,7 @@ if ($SmokeTest) {
                     }
                     4 {
                         $personalOnly=@($script:cases | Where-Object {$_.userId -ne $context.User.userId}).Count -eq 0
-                        $preserved=$ui.ApplicationNumberBox.Text -eq '10-2026-0000999' -and $ui.CpcBox.Text -eq 'G06N 3/00'
-                        $script:workspaceSeparationVerified=$personalOnly -and $preserved -and (Get-WorkspaceScope) -eq 'Mine' -and $ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab -and $script:documents.Count -eq 0 -and $script:ratings.Count -eq 0
+                        $script:workspaceSeparationVerified=$personalOnly -and (Get-WorkspaceScope) -eq 'Mine' -and $ui.PersonalTabs.SelectedItem -eq $ui.EvaluationTab -and $script:documents.Count -eq 0 -and $script:selectedCase.userId -eq $context.User.userId
                         if (-not $script:workspaceSeparationVerified) {throw '개인 선정·평가와 AI 담당 업무의 조회 범위 또는 입력내용이 분리되지 않았습니다.'}
                     }
                 }
@@ -909,6 +1051,10 @@ if ($SmokeTest) {
                 menus=@($ui.MainTabs.Items | ForEach-Object {$_.Header})
                 visibleMenus=@($ui.MainTabs.Items | Where-Object {$_.Visibility -eq 'Visible'} | ForEach-Object {$_.Header})
                 personalSteps=@($ui.PersonalTabs.Items | ForEach-Object {$_.Header})
+                visiblePersonalSteps=@($ui.PersonalTabs.Items | Where-Object {$_.Visibility -eq 'Visible'} | ForEach-Object {$_.Header})
+                selectionFlowVerified=[bool]$script:selectionFlowVerified;selectionStatus=(Get-UiValue $script:targetSelection 'status');sidebarVisible=$ui.CaseSidebar.Visibility -eq 'Visible'
+                evaluationOpened=$ui.PersonalTabs.SelectedItem -eq $ui.EvaluationTab;caseStatusLabels=@($script:cases | ForEach-Object {$_.statusLabel});rankSourceIds=@($script:ranks | ForEach-Object {$_.sourceId})
+                rankHeight=$ui.RankGrid.ActualHeight;ratingsHeight=$ui.RatingsGrid.ActualHeight
                 evaluationColumns=@($ui.RatingsGrid.Columns | ForEach-Object {$_.Header})
                 adminVisible=($ui.AdminTab.Visibility -eq 'Visible');deliveryVisible=($ui.DeliveryTab.Visibility -eq 'Visible')
                 launchMode=$script:launchMode;accessMode=$context.accessMode;loginDialogShown=[bool]$script:loginDialogShown
@@ -923,6 +1069,7 @@ if ($SmokeTest) {
             [IO.File]::WriteAllText($SmokeReportPath,(ConvertTo-Json -InputObject $report -Depth 10),(New-Object Text.UTF8Encoding($false)))
         }
         $script:submissionRows.Clear();$ui.ApplicationNumberBox.Clear();$ui.CpcBox.Clear();$ui.SubmissionBox.Clear()
+        $script:selectionBaselineStamp=Get-SelectionInputStamp
         $script:editDirty=$false;$script:evalDirty=$false;$script:adminDirty=$false;$window.Close()
     });$script:smokeTimer.Start()
 }

@@ -35,6 +35,7 @@ function Assert-ExportCaseFields {
         [xml]$sheet = Read-ExportZipEntry $Archive ('xl/worksheets/sheet{0}.xml' -f $sheetIndex)
         $sheetRows = @($sheet.GetElementsByTagName('row'))
         Assert-ExportTest ($sheetRows.Count -gt 1) "Snapshot sheet $sheetIndex has data rows to verify."
+        Assert-ExportTest (@($sheetRows[0].GetElementsByTagName('c') | Where-Object {$_.InnerText -match '버전'}).Count -eq 0) 'Export does not expose revision columns.'
         $columnReferences = @{}
         foreach ($cell in $sheetRows[0].GetElementsByTagName('c')) {
             if ($expected.Contains($cell.InnerText)) { $columnReferences[$cell.InnerText] = $cell.GetAttribute('r') -replace '\d+$', '' }

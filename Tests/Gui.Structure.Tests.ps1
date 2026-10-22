@@ -130,7 +130,7 @@ try {
     if (($ratingHeaders -join '|') -cne '조사 방식|문헌|점수(0~5점)|인용여부(O/X)|비고') { throw 'Evaluation grid must contain exactly the requested five columns.' }
     Assert-ChoiceColumn $ratingsGrid 2 scoreText @('', '0', '1', '2', '3', '4', '5')
     Assert-ChoiceColumn $ratingsGrid 3 citedText @('', 'O', 'X')
-    Assert-ChoiceColumn ($window.FindName('RankGrid')) 2 choice @('', '대기 중', '1', '2', '3', '순위 외', '평가 제외', '비교 불가', '결과 없음') $true
+    Assert-ChoiceColumn ($window.FindName('RankGrid')) 1 choice @('', '대기 중', '1', '2', '3', '순위 외', '평가 제외', '비교 불가') $true
     $membersGrid = Find-TestControl PeriodMembersGrid
     $assignmentsGrid = Find-TestControl PeriodAssignmentsGrid
     if ($membersGrid.Columns.Count -ne 2 -or $assignmentsGrid.Columns.Count -ne 3) { throw 'Month settings must show named participants and AI assignments.' }

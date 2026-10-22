@@ -131,7 +131,7 @@ function Show-AdminRecord($Data,[string]$Kind) {
         $script:adminOriginal=Copy-AdminData $Data
         $script:adminIsNew=($script:adminVersion -eq 0)
         $script:adminIsNewUser=$script:adminIsNew -and $Kind -eq 'Users'
-        $ui.AdminReasonBox.Clear();$ui.AdminSavedText.Text=''
+        $ui.AdminSavedText.Text=''
         switch ($Kind) {
             'Users' {Set-UserForm $Data}
             'Groups' {$ui.GroupNameBox.Text=[string](Get-UiValue $Data 'name');$ui.GroupActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true)}
@@ -154,7 +154,7 @@ function Show-AdminRecord($Data,[string]$Kind) {
             }
         }
         Update-AdminEditor
-        $label=if ($script:adminIsNew) {'새 항목 · 입력한 내용을 저장하세요.'} else {"선택 즉시 불러옴 · 현재 $script:adminVersion 판 · 수정 후 저장하세요."}
+        $label=if ($script:adminIsNew) {'새 항목 · 입력한 내용을 저장하세요.'} else {"수정 후 저장하세요."}
         $ui.AdminEditorStateText.Text=$label
         $script:adminBaselineStamp=Get-AdminInputStamp
         $script:adminDirty=$false
@@ -236,7 +236,7 @@ function Read-AdminForm {
 }
 function Save-AdminForm {
     $kind=Get-AdminKind;$data=Read-AdminForm;$id=Get-AdminId $data $kind
-    $payload=@{kind=$kind;id=$id;data=$data;expected=$script:adminVersion;reason=$ui.AdminReasonBox.Text.Trim();newUser=[bool]$script:adminIsNewUser}
+    $payload=@{kind=$kind;id=$id;data=$data;expected=$script:adminVersion;reason='';newUser=[bool]$script:adminIsNewUser}
     $request=Get-Request "master:$kind`:$id" $payload
     Set-Status '설정을 저장하는 중…'
     Invoke-UiWork -Work {
@@ -253,7 +253,7 @@ function Save-AdminForm {
         Show-AdminRecord $saved $kind
         $ui.AdminSavedText.Text='저장 완료';$ui.AdminSavedText.Foreground='#147D57'
         if ($kind -eq 'Period') {Sync-AdminPeriodList $id;Load-Cases}
-        else {Set-Status "설정 $script:adminVersion 판 저장 완료 · 목록에 즉시 반영했습니다."}
+        else {Set-Status "설정 저장 완료 · 목록에 즉시 반영했습니다."}
     }
 }
 function Sync-AdminPeriodList([string]$SelectedPeriod='') {
@@ -267,7 +267,7 @@ function Change-PeriodStatus([string]$Status) {
     $month=if ((Get-AdminKind) -eq 'Period' -and -not $script:adminIsNew) {$script:adminLoadedId} else {Get-SelectedPeriod}
     $settings=@($script:adminOptions.Period | Where-Object {$_.period -eq $month}) | Select-Object -First 1
     if (-not $settings) {throw '저장된 운영월을 먼저 선택하세요.'}
-    $reason=$ui.AdminReasonBox.Text.Trim();if (-not $reason) {throw '월 마감·재개방 사유를 입력하세요.'}
+    $reason=''
     $payload=@{period=$month;status=$Status;version=[int]$settings.version;reason=$reason}
     $request=Get-Request "period:$month" $payload
     Invoke-UiWork -Work {param($ctx,$payload,$request) Set-PeriodStatus -Context $ctx -Period $payload.period -Status $payload.status -ExpectedVersion $payload.version -RequestId $request -Reason $payload.reason} -Arguments @($context,$payload,$request) -Completed {
@@ -281,7 +281,7 @@ function Reset-AdminEditor {
     $script:adminOptions=@{Users=@();Groups=@();Sources=@();Period=@()}
     $before=$script:changing;$script:changing=$true
     try {
-        $script:adminMembers.Clear();$script:adminAssignments.Clear();$ui.AdminReasonBox.Clear();$ui.AdminKindCombo.SelectedIndex=0
+        $script:adminMembers.Clear();$script:adminAssignments.Clear();$ui.AdminKindCombo.SelectedIndex=0
         foreach ($kind in @('Users','Groups','Sources','Period')) {(Get-AdminSelector $kind).ItemsSource=@()}
         Update-AdminEditor
         if ('admin' -in $context.User.roles) {Refresh-AdminOptions;Select-AdminRecord}
@@ -297,7 +297,7 @@ function Initialize-AdminUi {
     $reader=[Xml.XmlReader]::Create((Join-Path $appDirectory 'Views\Admin.xaml'))
     try {$script:adminView=[Windows.Markup.XamlReader]::Load($reader)} finally {$reader.Close()}
     $ui.AdminContentHost.Content=$script:adminView
-    foreach ($name in @('AdminKindCombo','AdminUserCombo','AdminGroupCombo','AdminSourceCombo','AdminPeriodCombo','NewUserButton','AdminEditorStateText','AdminReasonBox','AdminSaveButton','AdminReloadButton','AdminSavedText','UserFieldsPanel','UserNameBox','UserBureauBox','UserDivisionBox','UserExaminerCheck','UserAiCheck','UserAdminCheck','UserActiveCheck','GroupFieldsPanel','GroupNameBox','GroupActiveCheck','SourceFieldsPanel','SourceNameBox','SourceTypeCombo','SourceActiveCheck','PeriodFieldsPanel','PeriodStateText','ClosePeriodButton','ReopenPeriodButton','PeriodYearCombo','PeriodMonthCombo','PeriodLimitCombo','SubmissionDeadlinePicker','DeliveryDeadlinePicker','EvaluationDeadlinePicker','PeriodSourcesList','PeriodMembersGrid','PeriodAssignmentsGrid','AddPeriodMemberButton','RemovePeriodMemberButton','AddPeriodAssignmentButton','RemovePeriodAssignmentButton')) {$ui[$name]=$script:adminView.FindName($name)}
+    foreach ($name in @('AdminKindCombo','AdminUserCombo','AdminGroupCombo','AdminSourceCombo','AdminPeriodCombo','NewUserButton','AdminEditorStateText','AdminSaveButton','AdminReloadButton','AdminSavedText','UserFieldsPanel','UserNameBox','UserBureauBox','UserDivisionBox','UserExaminerCheck','UserAiCheck','UserAdminCheck','UserActiveCheck','GroupFieldsPanel','GroupNameBox','GroupActiveCheck','SourceFieldsPanel','SourceNameBox','SourceTypeCombo','SourceActiveCheck','PeriodFieldsPanel','PeriodStateText','ClosePeriodButton','ReopenPeriodButton','PeriodYearCombo','PeriodMonthCombo','PeriodLimitCombo','SubmissionDeadlinePicker','DeliveryDeadlinePicker','EvaluationDeadlinePicker','PeriodSourcesList','PeriodMembersGrid','PeriodAssignmentsGrid','AddPeriodMemberButton','RemovePeriodMemberButton','AddPeriodAssignmentButton','RemovePeriodAssignmentButton')) {$ui[$name]=$script:adminView.FindName($name)}
     $script:adminMembers=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]';$script:adminAssignments=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
     $ui.PeriodMembersGrid.AutoGenerateColumns=$false;$ui.PeriodAssignmentsGrid.AutoGenerateColumns=$false
     $ui.PeriodMembersGrid.CanUserAddRows=$false;$ui.PeriodAssignmentsGrid.CanUserAddRows=$false

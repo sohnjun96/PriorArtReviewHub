@@ -162,7 +162,8 @@ try {
         Assert-True (@(Get-Deliveries $ai $case).Count -eq 1) 'nonowner AI sees only assigned source'
     }
 
-    Test-Case 'seven-document cap and no-results validation' {
+    Test-Case 'seven-document cap and legacy no-results validation' {
+        Assert-Throws {Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Published -Documents @()} '한 건 이상'
         $tooMany=@(1..8 | ForEach-Object {New-Document ('P'+$_)})
         Assert-Throws {Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents $tooMany} '최대 7'
         Assert-Throws {Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -NoResults $true} '사유'
@@ -176,7 +177,7 @@ try {
         Assert-Throws {Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents @(@{identifier='  '})} '식별정보'
         $withText=@($numberOnly.data.documents);$withText[0].title='보존할 명칭';$withText[0].description='보존할 관련 설명';$withText[0].type='LegacyCustom'
         $legacy=Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents $withText
-        $edited=Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 2 -RequestId (New-Request) -Status Published -Reason '번호 정정' -Documents @(@{documentId=$legacy.data.documents[0].documentId;identifier='10-2025-0000124'})
+        $edited=Save-Delivery -Context $admin -Case $numberCase -SourceId S02 -ExpectedVersion 2 -RequestId (New-Request) -Status Published -Documents @(@{documentId=$legacy.data.documents[0].documentId;identifier='10-2025-0000124'})
         Assert-True ($edited.data.documents[0].title -eq '보존할 명칭' -and $edited.data.documents[0].description -eq '보존할 관련 설명' -and $edited.data.documents[0].type -eq 'LegacyCustom') 'number-only editing retains legacy fields'
     }
 
@@ -210,7 +211,7 @@ try {
     }
 
     $newDocs=@((Get-DeliveryForEdit $admin $case S02).data.documents)
-    $s02v3=Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 2 -RequestId (New-Request) -Status Published -Documents $newDocs -Reason '문헌 설명 정정'
+    $s02v3=Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 2 -RequestId (New-Request) -Status Published -Documents $newDocs
     Test-Case 'republishing preserves IDs and invalidates old evaluation snapshot' {
         Assert-True ($s02v3.data.documents[0].documentId -eq $s02.data.documents[0].documentId) 'document identity remains stable'
         $old=Get-Evaluation $examiner $case
@@ -250,12 +251,12 @@ try {
 
     Test-Case 'closed month blocks writes, and explicit reopen restores them' {
         $closeRequest=New-Request
-        $closed=Set-PeriodStatus -Context $admin -Period $month -Status Closed -ExpectedVersion 1 -RequestId $closeRequest -Reason '월 마감'
+        $closed=Set-PeriodStatus -Context $admin -Period $month -Status Closed -ExpectedVersion 1 -RequestId $closeRequest
         Assert-Throws {Save-Delivery -Context $ai -Case $case -SourceId S03 -ExpectedVersion 1 -RequestId (New-Request) -Status Draft -Documents @($s03.data.documents)} '마감'
         Assert-Throws {New-Submission $examiner $month '10-2026-0000002' (New-Request)} '마감'
-        Assert-True ((Set-PeriodStatus -Context $admin -Period $month -Status Closed -ExpectedVersion 1 -RequestId $closeRequest -Reason '월 마감').version -eq 2) 'close retry uses original revision'
-        Assert-Throws {Set-PeriodStatus -Context $admin -Period $month -Status Open -ExpectedVersion 1 -RequestId $closeRequest -Reason '월 마감'} '요청 ID'
-        $opened=Set-PeriodStatus -Context $admin -Period $month -Status Open -ExpectedVersion 2 -RequestId (New-Request) -Reason '정정 재개방'
+        Assert-True ((Set-PeriodStatus -Context $admin -Period $month -Status Closed -ExpectedVersion 1 -RequestId $closeRequest).version -eq 2) 'close retry uses original revision'
+        Assert-Throws {Set-PeriodStatus -Context $admin -Period $month -Status Open -ExpectedVersion 1 -RequestId $closeRequest} '요청 ID'
+        $opened=Set-PeriodStatus -Context $admin -Period $month -Status Open -ExpectedVersion 2 -RequestId (New-Request)
         Assert-True ($opened.status -eq 'Open') 'month reopened'
     }
 
@@ -265,10 +266,10 @@ try {
         $owner.bureau='변경된 심사국';$owner.division='변경된 심사과'
         $null=Save-MasterRecord -Context $admin -Type Users -Id U002 -Data $owner -ExpectedVersion $owner.version -RequestId (New-Request)
         $cancelRequest=New-Request
-        $cancelled=Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '번호 정정'
+        $cancelled=Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest
         Assert-True ($cancelled.status -eq 'Cancelled' -and $cancelled.version -eq 2) 'cancel appends revision'
         Assert-True ($cancelled.cpc -eq 'G06F 16/00' -and $cancelled.examinerBureau -eq $extra.examinerBureau -and $cancelled.examinerDivision -eq $extra.examinerDivision) 'cancel preserves original CPC and affiliation snapshot'
-        Assert-True ((Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '번호 정정').version -eq 2) 'cancel retry'
+        Assert-True ((Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest).version -eq 2) 'cancel retry'
         Assert-Throws {Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '다른 사유'} '요청 ID'
         Assert-Throws {Save-Delivery -Context $examiner -Case $extra -SourceId S01 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -NoResults $true -NoResultsReason none} '취소'
     }
@@ -325,13 +326,15 @@ try {
         }
     }
 
-    Test-Case 'admin period edits preserve source snapshots and require lifecycle reasons' {
+    Test-Case 'admin period edits preserve source snapshots and allow lifecycle changes without reasons' {
         $period=Get-Period $admin $month
         $bad=$period | Select-Object *
         $bad.sourceIds=@('S01','S02');$bad.assignments=@($bad.assignments | Where-Object {$_.sourceId -ne 'S03'})
         Assert-Throws {Save-Period -Context $admin -Period $month -Data $bad -ExpectedVersion $period.version -RequestId (New-Request) -Reason 'remove source'} '제거할 수 없'
         $bad=$period | Select-Object *;$bad.status='Closed'
-        Assert-Throws {Save-Period -Context $admin -Period $month -Data $bad -ExpectedVersion $period.version -RequestId (New-Request)} '사유'
+        $closed=Save-Period -Context $admin -Period $month -Data $bad -ExpectedVersion $period.version -RequestId (New-Request)
+        Assert-True ($closed.status -eq 'Closed') 'period can close without a reason'
+        $period=Set-PeriodStatus -Context $admin -Period $month -Status Open -ExpectedVersion $closed.version -RequestId (New-Request)
         $period.submissionLimit=3
         $request=New-Request
         $saved=Save-Period -Context $admin -Period $month -Data $period -ExpectedVersion $period.version -RequestId $request -Reason '상한 설정'

@@ -571,8 +571,7 @@ function New-Submission {
 
 function Cancel-Submission {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)]$Case, [Parameter(Mandatory)][int]$ExpectedVersion,
-        [Parameter(Mandatory)][string]$RequestId, [Parameter(Mandatory)][string]$Reason)
-    if ([string]::IsNullOrWhiteSpace($Reason)) { throw '취소 사유를 입력하십시오.' }
+        [Parameter(Mandatory)][string]$RequestId, [string]$Reason = '')
     $null = Assert-WContext $Context
     $actual = Get-WCase $Context $Case
     $fingerprint = Get-WFingerprint @{operation='CancelSubmission';caseId=$actual.caseId;expectedVersion=$ExpectedVersion;reason=$Reason}
@@ -735,9 +734,7 @@ function Save-Delivery {
         $docs = @(Convert-WDocuments $Context $actual $SourceId $Documents $current)
         if ($NoResults -and $docs.Count -gt 0) { throw '결과 없음과 문헌 목록을 동시에 등록할 수 없습니다.' }
         if ($NoResults -and [string]::IsNullOrWhiteSpace($NoResultsReason)) { throw '결과 없음 사유를 입력하십시오.' }
-        if ($Status -eq 'Published' -and -not $NoResults -and $docs.Count -eq 0) { throw '납품하려면 문헌을 입력하거나 결과 없음을 선택하십시오.' }
-        $previousPublished = Get-WPublished $Context $actual $SourceId
-        if ($Status -eq 'Published' -and $previousPublished -and [string]::IsNullOrWhiteSpace($Reason)) { throw '재납품 수정 사유를 입력하십시오.' }
+        if ($Status -eq 'Published' -and -not $NoResults -and $docs.Count -eq 0) { throw '저장할 문헌 출원번호를 한 건 이상 입력하십시오.' }
         $source = @(Get-WMasterRecords $Context.root 'Sources' | Where-Object { $_.sourceId -eq $SourceId }) | Select-Object -First 1
         $data = [pscustomobject]@{ caseId = $actual.caseId; period = $actual.period; groupId = $actual.groupId; userId = $actual.userId;
             sourceId = $SourceId; sourceName = $source.name; status = $Status; documents = @($docs); noResults = $NoResults; noResultsReason = $NoResultsReason;
@@ -797,7 +794,7 @@ function Convert-WRatings {
         $documentId = [string](Get-WValue $rating 'documentId')
         if (-not $Published.ContainsKey($sourceId)) { throw '납품되지 않은 조사 방식의 문헌을 평가할 수 없습니다.' }
         $documents = @((Get-WValue $Published[$sourceId].data 'documents' @()))
-        if (@($documents | Where-Object { $_.documentId -eq $documentId }).Count -ne 1) { throw '현재 납품 버전에 없는 문헌 평가입니다.' }
+        if (@($documents | Where-Object { $_.documentId -eq $documentId }).Count -ne 1) { throw '현재 검색 결과에 없는 문헌 평가입니다.' }
         $key = $sourceId + '/' + $documentId
         if ($used.ContainsKey($key)) { throw '동일 문헌 평가가 중복되었습니다.' }
         $used[$key] = $true
@@ -953,9 +950,8 @@ function Get-CaseStatus {
 
 function Set-PeriodStatus {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Period, [Parameter(Mandatory)][ValidateSet('Open','Closed')][string]$Status,
-        [Parameter(Mandatory)][int]$ExpectedVersion, [Parameter(Mandatory)][string]$RequestId, [Parameter(Mandatory)][string]$Reason)
+        [Parameter(Mandatory)][int]$ExpectedVersion, [Parameter(Mandatory)][string]$RequestId, [string]$Reason = '')
     $user = Assert-WAdmin $Context
-    if ([string]::IsNullOrWhiteSpace($Reason)) { throw '마감 또는 재개방 사유를 입력하십시오.' }
     Assert-WPeriod $Period
     Assert-WId $RequestId '저장 요청 ID'
     $path = Join-Path (Join-Path $Context.root 'Periods') $Period
@@ -1101,7 +1097,6 @@ function Save-Period {
         $path = Join-Path (Join-Path $Context.root 'Periods') $Period
         $user = Assert-WAdmin $Context
         $previous = Read-Revision -Path $path
-        if ($previous -and [string]$previous.data.status -ne [string]$clean.status -and [string]::IsNullOrWhiteSpace($Reason)) { throw '월 마감 또는 재개방 사유를 입력하십시오.' }
         if ($previous -and @(Get-Cases -Context $Context -Period $Period -Scope All).Count -gt 0) {
             foreach ($oldSourceId in @((Get-WValue $previous.data 'sourceIds' @()))) {
                 if ($sourceIds -notcontains $oldSourceId) { throw '제출 건이 있는 운영월의 기존 비교 조사 방식을 제거할 수 없습니다.' }

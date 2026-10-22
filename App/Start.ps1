@@ -81,10 +81,10 @@ if (-not $script:context) {return}
 $reader = [Xml.XmlReader]::Create((Join-Path $PSScriptRoot 'Views\Main.xaml'))
 try { $script:window = [Windows.Markup.XamlReader]::Load($reader) } finally { $reader.Close() }
 $script:ui = @{}
-$names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','EditVersionText','NoResultsCheck','NoResultsReasonBox','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','HistoryButton','DeliveryReasonBox','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','EvaluationReasonBox','SaveEvaluationButton','EvaluationVersionText','AdminTab','AdminContentHost','ModeText','StatusText')
+$names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','DeliveryStateText','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','SaveEvaluationButton','EvaluationSavedText','AdminTab','AdminContentHost','ModeText','StatusText')
 $names += 'CaseExportButton'
 $names += @('CaseSidebar','CaseSidebarColumn','CaseGapColumn','CaseSplitter','SelectionDraftButton','SelectionHelpText')
-$names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','SwitchUserButton','PersonalWorkTab','PersonalTabs','TargetSelectionTab','EvaluationTab','EvaluationTabs','ResultNumbersBox','AddResultNumbersButton','CaseStateCombo','CasesEmptyText','GoEvaluationButton','DocumentCountText','DeliveryReasonExpander','CaseListTitleText','CaseListHintText','WorkflowHintText')
+$names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','SwitchUserButton','PersonalWorkTab','PersonalTabs','TargetSelectionTab','EvaluationTab','EvaluationTabs','ResultNumbersBox','AddResultNumbersButton','CaseStateCombo','CasesEmptyText','GoEvaluationButton','DocumentCountText','CaseListTitleText','CaseListHintText','WorkflowHintText')
 foreach ($name in $names) { $script:ui[$name] = $window.FindName($name) }
 $script:busy = $false
 $script:changing = $false
@@ -128,12 +128,10 @@ function Update-ActionAvailability {
     $ui.CancelSubmissionButton.IsEnabled=$own -and -not $script:busy
     $ui.GoEvaluationButton.IsEnabled=$hasCase -and $script:selectedCase.userId -eq $context.User.userId
     $ui.LoadDeliveryButton.IsEnabled=$hasCase -and $ui.SourceCombo.Items.Count -gt 0
-    foreach ($name in @('ResultNumbersBox','AddResultNumbersButton','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton','NoResultsCheck','DeliveryReasonBox')) {$ui[$name].IsEnabled=[bool]$canEdit}
+    foreach ($name in @('ResultNumbersBox','AddResultNumbersButton','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton')) {$ui[$name].IsEnabled=[bool]$canEdit}
     $ui.DocumentsGrid.IsReadOnly=-not $canEdit
-    $ui.NoResultsReasonBox.IsEnabled=$canEdit -and [bool]$ui.NoResultsCheck.IsChecked
     $ui.SaveEvaluationButton.IsEnabled=$own -and $script:published.Count -gt 0
     $ui.RatingsGrid.IsReadOnly=-not $own;$ui.RankGrid.IsReadOnly=-not $own
-    $ui.EvaluationReasonBox.IsEnabled=$own
     $ui.SubmitButton.IsEnabled='examiner' -in $context.User.roles -and $script:loadedPeriod.status -ne 'Closed'
     $canSelect=$ui.SubmitButton.IsEnabled -and ($AdminMode -or ($script:targetSelection -and $script:targetSelection.status -ne 'Confirmed'))
     foreach ($name in @('SubmitButton','SelectionDraftButton','ApplicationNumberBox','CpcBox','SubmissionBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton')) {$ui[$name].IsEnabled=[bool]$canSelect}
@@ -158,7 +156,6 @@ function Get-EvaluationInputStamp {
     $inputState=[ordered]@{
         ratings=@($script:ratings | ForEach-Object {[ordered]@{source=[string]$_.sourceId;document=[string]$_.documentId;score=[string]$_.scoreText;cited=[string]$_.citedText;note=[string]$_.note}})
         ranks=@($script:ranks | ForEach-Object {[ordered]@{source=[string]$_.sourceId;choice=[string]$_.choice}})
-        reason=[string]$ui.EvaluationReasonBox.Text
     }
     return ConvertTo-Json -InputObject $inputState -Depth 10 -Compress
 }
@@ -435,10 +432,9 @@ function Clear-Detail {
     $ui.PublishedGrid.ItemsSource=@(); $ui.CaseTitle.Text='대상건을 등록하거나 목록에서 선택하세요'
     $ui.CaseSubtitle.Text='선택한 업무의 출원 목록에서 대상건을 선택하세요.'
     $ui.CaseMetadataText.Text=''
-    $ui.EditVersionText.Text=''; $ui.EvaluationVersionText.Text=''
+    $ui.DeliveryStateText.Text=''; $ui.EvaluationSavedText.Text=''
     $ui.DeliverySummaryText.Text='왼쪽에서 출원을 선택하면 검색 결과가 표시됩니다.'
     $ui.EvaluationStateText.Text='왼쪽에서 본인 출원을 선택하면 바로 평가할 수 있습니다.'
-    $ui.NoResultsCheck.IsChecked=$false;$ui.NoResultsReasonBox.Clear();$ui.DeliveryReasonBox.Clear();$ui.EvaluationReasonBox.Clear()
     Update-ActionAvailability
 }
 function Load-Cases([string]$SelectCaseId='') {
@@ -506,7 +502,7 @@ function Show-CaseDetail($Case) {
     $script:changing=$true
     $script:deliveryEdit=$null;$script:loadedSource=$null;$script:evaluation=$null;$script:published=@()
     $script:documents.Clear();$script:ratings.Clear();$script:ranks.Clear();$ui.ResultNumbersBox.Clear();$ui.PublishedGrid.ItemsSource=@()
-    $ui.NoResultsCheck.IsChecked=$false;$ui.NoResultsReasonBox.Clear();$ui.DeliveryReasonBox.Clear();$ui.EvaluationReasonBox.Clear();$ui.EditVersionText.Text='조회 중…'
+    $ui.DeliveryStateText.Text='조회 중…'
     $script:editDirty=$false;$script:evalDirty=$false;$script:changing=$false
     $script:selectedCase=$Case
     $script:lastCase=$Case
@@ -536,7 +532,7 @@ function Show-CaseDetail($Case) {
             $script:selectedCase.statusLabel=if ($script:selectedCase.status -eq 'Cancelled') {'취소'} else {$snapshot.progress.deliveryStatusLabel}
             $ui.CasesGrid.Items.Refresh()
         }
-        $script:deliveryEdit=$null; $script:loadedSource=$null; $script:documents.Clear(); $ui.EditVersionText.Text='편집 자료를 불러오세요'
+        $script:deliveryEdit=$null; $script:loadedSource=$null; $script:documents.Clear(); $ui.DeliveryStateText.Text='편집 자료를 불러오세요'
         $script:published=@($snapshot.deliveries); $script:evaluation=$snapshot.evaluation
         $editable=@($script:allSources | Where-Object {
             $source=$_
@@ -563,7 +559,7 @@ function Show-CaseDetail($Case) {
         $script:caseDetailLoaded=$true
         if ($SmokeTest -and $script:expectedRefreshSource -and @($script:published | Where-Object {$_.data.sourceId -eq $script:expectedRefreshSource -and $_.version -eq $script:expectedRefreshVersion}).Count) {$script:automaticDeliveryRefreshVerified=$true}
         $script:editDirty=$false; $script:evalDirty=$false; $script:changing=$false
-        Set-Status '조회 완료 · 평가와 순위는 불러온 납품 판에 연결됩니다.'
+        Set-Status '조회 완료 · 내용을 확인하고 평가를 저장하세요.'
         if ($ui.MainTabs.SelectedItem -eq $ui.DeliveryTab -and $ui.SourceCombo.SelectedItem) {Load-DeliveryEditor}
     }
 }
@@ -577,10 +573,10 @@ function Initialize-EvaluationRows {
     foreach ($delivery in $script:published) {
         if ($old) { $prop=$old.deliveryVersions.PSObject.Properties[$delivery.data.sourceId]; if (-not $prop -or [int]$prop.Value -ne $delivery.version) { $stale=$true } }
         $prior=@(); if ($old) { $prior=@($old.rankings | Where-Object {$_.sourceId -eq $delivery.data.sourceId}) }
-        $choice=''; if ($delivery.data.noResults) {$choice='결과 없음'} elseif ($prior.Count) {
+        $choice=''; if ($delivery.data.noResults) {$choice='평가 제외'} elseif ($prior.Count) {
             switch ($prior[0].status) { 'Ranked' {$choice=[string]$prior[0].rank}; 'Outside' {$choice='순위 외'}; 'Excluded' {$choice='평가 제외'}; 'Incomparable' {$choice='비교 불가'} }
         }
-        $script:ranks.Add([pscustomobject]@{sourceId=$delivery.data.sourceId;sourceName=$delivery.data.sourceName;deliveryVersion=$delivery.version;deliveryVersionLabel=([string]$delivery.version+'판');choice=$choice;noResults=[bool]$delivery.data.noResults;notDelivered=$false})
+        $script:ranks.Add([pscustomobject]@{sourceId=$delivery.data.sourceId;sourceName=$delivery.data.sourceName;deliveryVersion=$delivery.version;choice=$choice;noResults=[bool]$delivery.data.noResults;notDelivered=$false})
         foreach ($doc in @($delivery.data.documents)) {
             $priorRating=@(); if ($old) { $priorRating=@($old.documentRatings | Where-Object {$_.sourceId -eq $delivery.data.sourceId -and $_.documentId -eq $doc.documentId}) }
             $score='';$cited='';$note=''
@@ -591,13 +587,13 @@ function Initialize-EvaluationRows {
     # Show every comparison method, including the general prior-art search before it is delivered.
     foreach ($source in @($script:allSources | Where-Object {$_.sourceId -in $script:loadedPeriod.sourceIds -or $_.type -eq 'General'})) {
         if ($source.sourceId -notin @($script:ranks | ForEach-Object {$_.sourceId})) {
-            $script:ranks.Add([pscustomobject]@{sourceId=$source.sourceId;sourceName=$source.name;deliveryVersion=0;deliveryVersionLabel='—';choice='대기 중';noResults=$false;notDelivered=$true})
+            $script:ranks.Add([pscustomobject]@{sourceId=$source.sourceId;sourceName=$source.name;deliveryVersion=0;choice='대기 중';noResults=$false;notDelivered=$true})
         }
     }
     $ordered=@($script:ranks | Sort-Object @{Expression={if ($_.sourceId -in @($script:allSources | Where-Object {$_.type -eq 'General'} | ForEach-Object {$_.sourceId})) {0} else {1}}},sourceId)
     $script:ranks.Clear();foreach ($rank in $ordered) {$script:ranks.Add($rank)}
-    $ui.EvaluationVersionText.Text=if ($script:evaluation) {"평가 $($script:evaluation.version)판"} else {'평가 저장 전'}
-    $ui.EvaluationStateText.Text=if ($stale) {'재확인 필요: 납품 판이 변경되었습니다. 문헌 평가와 전체 순위를 확인한 뒤 저장하세요.'} elseif ($own) {'선행기술조사와 AI 결과 묶음을 비교해 순위를 선택하세요. 대기 중인 방식은 납품 후 평가할 수 있습니다.'} else {'본인 출원의 평가만 입력할 수 있습니다.'}
+    $ui.EvaluationSavedText.Text=if ($script:evaluation) {'저장된 평가'} else {'평가 저장 전'}
+    $ui.EvaluationStateText.Text=if ($stale) {'검색 결과가 수정되었습니다. 문헌 평가와 전체 순위를 확인한 뒤 저장하세요.'} elseif ($own) {'선행기술조사와 AI 결과 묶음을 비교해 순위를 선택하세요. 대기 중인 방식은 납품 후 평가할 수 있습니다.'} else {'본인 출원의 평가만 입력할 수 있습니다.'}
     $script:evalBaselineStamp=Get-EvaluationInputStamp
 }
 function Load-DeliveryEditor {
@@ -605,7 +601,7 @@ function Load-DeliveryEditor {
     $case=Require-Case
     if (-not $ui.SourceCombo.SelectedItem) {throw '조사 방식을 선택하세요.'}
     $source=[string]$ui.SourceCombo.SelectedItem.sourceId
-    Set-Status '편집할 최신 버전 조회 중…'
+    Set-Status '저장된 검색 결과 조회 중…'
     Invoke-UiWork -Work {param($ctx,$case,$source) Get-DeliveryForEdit -Context $ctx -Case $case -SourceId $source} -Arguments @($context,$case,$source) -Completed {
         param($result)
         $script:changing=$true
@@ -617,12 +613,8 @@ function Load-DeliveryEditor {
             foreach ($doc in @($script:deliveryEdit.data.documents)) {
                 $script:documents.Add([pscustomobject]@{documentId=$doc.documentId;type=(Get-UiValue $doc 'type' '특허');identifier=$doc.identifier;title=(Get-UiValue $doc 'title');description=(Get-UiValue $doc 'description');attachments=@($doc.attachments)})
             }
-            $ui.NoResultsCheck.IsChecked=[bool]$script:deliveryEdit.data.noResults; $ui.NoResultsReasonBox.Text=[string]$script:deliveryEdit.data.noResultsReason
-        } else {$ui.NoResultsCheck.IsChecked=$false;$ui.NoResultsReasonBox.Text=''}
-        $ui.DeliveryReasonBox.Text=''
-        $ui.NoResultsReasonBox.IsEnabled=[bool]$ui.NoResultsCheck.IsChecked
-        $ui.DeliveryReasonExpander.IsExpanded=$null -ne $script:deliveryEdit
-        $ui.EditVersionText.Text=if ($script:deliveryEdit) {"$($script:deliveryEdit.version)판 · $(if ($script:deliveryEdit.data.status -eq 'Published') {'등록 완료'} else {'임시저장'})"} else {'신규 입력 · 저장된 결과 없음'}
+        }
+        $ui.DeliveryStateText.Text=if ($script:deliveryEdit) {$(if ($script:deliveryEdit.data.status -eq 'Published') {'저장 완료'} else {'임시저장'})} else {'신규 입력 · 저장된 결과 없음'}
         $script:editDirty=$false;$script:changing=$false
         Set-Status '편집 자료를 불러왔습니다.'
     }
@@ -646,18 +638,18 @@ function Save-DeliveryEditor([string]$Status) {
     [void]$ui.DocumentsGrid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Cell,$true);[void]$ui.DocumentsGrid.CommitEdit([Windows.Controls.DataGridEditingUnit]::Row,$true)
     $docs=@($script:documents | ForEach-Object {[pscustomobject]@{documentId=$_.documentId;type=$_.type;identifier=$_.identifier;title=$_.title;description=$_.description;attachments=@($_.attachments)}})
     $version=if ($script:deliveryEdit) {[int]$script:deliveryEdit.version} else {0}
-    $payload=@{case=$case.caseId;source=$script:loadedSource;expected=$version;status=$Status;documents=$docs;noResults=[bool]$ui.NoResultsCheck.IsChecked;noResultsReason=$ui.NoResultsReasonBox.Text;reason=$ui.DeliveryReasonBox.Text}
+    $payload=@{case=$case.caseId;source=$script:loadedSource;expected=$version;status=$Status;documents=$docs}
     $request=Get-Request "delivery:$($case.caseId):$script:loadedSource" $payload
-    Set-Status '납품 저장 및 버전 확인 중…'
+    Set-Status '검색 결과 저장 중…'
     Invoke-UiWork -Work {
         param($ctx,$case,$payload,$request)
-        Save-Delivery -Context $ctx -Case $case -SourceId $payload.source -ExpectedVersion $payload.expected -RequestId $request -Status $payload.status -Documents $payload.documents -NoResults $payload.noResults -NoResultsReason $payload.noResultsReason -Reason $payload.reason
+        Save-Delivery -Context $ctx -Case $case -SourceId $payload.source -ExpectedVersion $payload.expected -RequestId $request -Status $payload.status -Documents $payload.documents
     } -Arguments @($context,$case,$payload,$request) -Completed {
         param($result)
         $script:deliveryEdit=$result[0];$script:editDirty=$false
-        $ui.EditVersionText.Text="$($script:deliveryEdit.version)판 · $($script:deliveryEdit.data.status)"
+        $ui.DeliveryStateText.Text=$(if ($script:deliveryEdit.data.status -eq 'Published') {'저장 완료'} else {'임시저장'})
         if ($script:deliveryEdit.data.status -eq 'Published' -and $SmokeTest) {$script:expectedRefreshSource=$script:loadedSource;$script:expectedRefreshVersion=$script:deliveryEdit.version}
-        Set-Status "검색 결과 $($script:deliveryEdit.version)판 저장 완료 · 조회와 평가를 갱신합니다."
+        Set-Status '검색 결과 저장 완료 · 조회와 평가를 갱신합니다.'
         Show-CaseDetail $script:selectedCase
     }
 }
@@ -675,27 +667,27 @@ function Save-EvaluationEditor {
         if ($row.notDelivered) {continue}
         if ([string]::IsNullOrWhiteSpace($row.choice)) {continue}
         $rank=$null
-        $state=switch ($row.choice) {'1' {$rank=1;'Ranked'};'2' {$rank=2;'Ranked'};'3' {$rank=3;'Ranked'};'순위 외' {'Outside'};'평가 제외' {'Excluded'};'비교 불가' {'Incomparable'};'결과 없음' {if (-not $row.noResults) {throw '문헌이 있는 납품에 결과 없음을 지정할 수 없습니다.'};'NoResults'};'' {'Excluded'};default {throw '순위는 1, 2, 3, 순위 외, 평가 제외, 비교 불가 중 입력하세요.'}}
+        $state=switch ($row.choice) {'1' {$rank=1;'Ranked'};'2' {$rank=2;'Ranked'};'3' {$rank=3;'Ranked'};'순위 외' {'Outside'};'평가 제외' {'Excluded'};'비교 불가' {'Incomparable'};'' {'Excluded'};default {throw '순위는 1, 2, 3, 순위 외, 평가 제외, 비교 불가 중 입력하세요.'}}
         [pscustomobject]@{sourceId=$row.sourceId;rank=$rank;status=$state}
     })
     $versions=@{};foreach ($delivery in $script:published) {$versions[$delivery.data.sourceId]=[int]$delivery.version}
     $expected=if ($script:evaluation) {[int]$script:evaluation.version} else {0}
-    $payload=@{expected=$expected;deliveryVersions=$versions;documentRatings=$ratingRows;rankings=$rankingRows;reason=$ui.EvaluationReasonBox.Text}
+    $payload=@{expected=$expected;deliveryVersions=$versions;documentRatings=$ratingRows;rankings=$rankingRows}
     $request=Get-Request "evaluation:$($case.caseId)" $payload
-    Set-Status '평가 저장 및 납품 판 확인 중…'
-    Invoke-UiWork -Work {param($ctx,$case,$payload,$request) Save-Evaluation -Context $ctx -Case $case -ExpectedVersion $payload.expected -RequestId $request -DeliveryVersions $payload.deliveryVersions -DocumentRatings $payload.documentRatings -Rankings $payload.rankings -Reason $payload.reason} -Arguments @($context,$case,$payload,$request) -Completed {
+    Set-Status '평가 저장 중…'
+    Invoke-UiWork -Work {param($ctx,$case,$payload,$request) Save-Evaluation -Context $ctx -Case $case -ExpectedVersion $payload.expected -RequestId $request -DeliveryVersions $payload.deliveryVersions -DocumentRatings $payload.documentRatings -Rankings $payload.rankings} -Arguments @($context,$case,$payload,$request) -Completed {
         param($result)
         $script:evaluation=$result[0];$script:evalDirty=$false
         $script:evalBaselineStamp=Get-EvaluationInputStamp
-        $ui.EvaluationVersionText.Text="평가 $($script:evaluation.version)판"
-        $ui.EvaluationStateText.Text='불러온 납품 판에 대한 평가를 저장했습니다.'
+        $ui.EvaluationSavedText.Text='저장된 평가'
+        $ui.EvaluationStateText.Text='평가를 저장했습니다.'
         Set-Status '평가 저장 확인 완료.'
     }
 }
 function Export-Current([bool]$IncludeAttachments,[string]$CaseId='') {
     $period=Get-SelectedPeriod;$scope=Get-WorkspaceScope
     $folder=Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'AI검색평가'
-    Set-Status '고정된 납품 판으로 다운로드 파일 생성 중…'
+    Set-Status '다운로드 파일 생성 중…'
     Invoke-UiWork -Work {
         param($ctx,$period,$scope,$folder,$attachments,$caseId)
         $exportArgs=@{Context=$ctx;Period=$period;Scope=$scope;OutputDirectory=$folder;IncludeAttachments=$attachments}
@@ -802,8 +794,7 @@ $ui.AddResultNumbersButton.Add_Click({Invoke-UiAction {Add-ResultNumberRows}})
 $ui.CancelSubmissionButton.Add_Click({Invoke-UiAction {
     if (-not (Confirm-Discard)) {return}
     $case=Require-Case
-    $reason=$ui.DeliveryReasonBox.Text
-    if (-not $reason) {$reason='심사관 요청에 따른 제출 취소'}
+    $reason=''
     if ([Windows.MessageBox]::Show($window,"$($case.applicationNumber) 출원을 취소할까요?",'제출 취소','YesNo','Question') -ne 'Yes') {return}
     $request=Get-Request "cancel:$($case.caseId)" @{expected=$case.version;reason=$reason}
     Invoke-UiWork -Work {param($ctx,$case,$reason,$request) Cancel-Submission -Context $ctx -Case $case -ExpectedVersion $case.version -RequestId $request -Reason $reason} -Arguments @($context,$case,$reason,$request) -Completed {param($result) Load-Cases}
@@ -838,23 +829,13 @@ $ui.AddDocumentButton.Add_Click({Invoke-UiAction {
     [void]$ui.DocumentsGrid.Focus();[void]$ui.DocumentsGrid.BeginEdit()
 }})
 $ui.RemoveDocumentButton.Add_Click({if ($ui.DocumentsGrid.SelectedItem) {[void]$script:documents.Remove($ui.DocumentsGrid.SelectedItem);$script:editDirty=$true}})
-$ui.HistoryButton.Add_Click({Invoke-UiAction {
-    if (-not $script:deliveryEdit) {throw '저장된 편집 자료를 먼저 불러오세요.'}
-    $case=Require-Case
-    Invoke-UiWork -Work {param($ctx,$case,$source) Get-DeliveryHistory -Context $ctx -Case $case -SourceId $source} -Arguments @($context,$case,$script:loadedSource) -Completed {
-        param($result)
-        $text=($result | ForEach-Object {"$($_.version)판 · $($_.data.status) · $($_.actorId) · $($_.writtenAt)`n$($_.reason)"}) -join "`n`n"
-        [Windows.MessageBox]::Show($window,$text,'납품 버전 이력','OK','Information') | Out-Null
-    }
-}})
 $ui.DraftButton.Add_Click({Invoke-UiAction {Save-DeliveryEditor 'Draft'}})
 $ui.PublishButton.Add_Click({Invoke-UiAction {Save-DeliveryEditor 'Published'}})
 $ui.SaveEvaluationButton.Add_Click({Invoke-UiAction {Save-EvaluationEditor}})
 $ui.ExportButton.Add_Click({Invoke-UiAction {Export-Current $false}})
 $ui.ZipButton.Add_Click({Invoke-UiAction {Export-Current $true}})
 $ui.CaseExportButton.Add_Click({Invoke-UiAction {$case=Require-Case;Export-Current $true $case.caseId}})
-foreach ($control in @($ui.NoResultsReasonBox,$ui.DeliveryReasonBox,$ui.ResultNumbersBox)) {$control.Add_TextChanged({if (-not $script:changing) {$script:editDirty=$true}})}
-$ui.NoResultsCheck.Add_Click({if (-not $script:changing) {$script:editDirty=$true;Update-ActionAvailability}})
+$ui.ResultNumbersBox.Add_TextChanged({if (-not $script:changing) {$script:editDirty=$true}})
 $ui.DocumentsGrid.Add_CellEditEnding({if (-not $script:changing) {$script:editDirty=$true}})
 $ui.RatingsGrid.Add_CellEditEnding({if (-not $script:changing) {$script:evalDirty=$true}})
 $ui.RankGrid.Add_CellEditEnding({if (-not $script:changing) {$script:evalDirty=$true}})
@@ -866,7 +847,6 @@ foreach ($grid in @($ui.RatingsGrid,$ui.RankGrid)) {
         }
     })
 }
-$ui.EvaluationReasonBox.Add_TextChanged({if (-not $script:changing) {$script:evalDirty=$true}})
 $window.Add_Closing({
     param($sender,$eventArgs)
     if ($script:busy) {$eventArgs.Cancel=$true;Set-Status '진행 중인 저장·조회가 끝난 뒤 종료하세요.'}
@@ -925,7 +905,7 @@ if ($SmokeTest) {
             $script:selectionStepPreserved=$script:activeWorkspace -eq 'Personal' -and $ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab
             return
         }
-        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 14) {
+        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 16) {
             Invoke-UiAction {
                 switch ($script:smokeStage) {
                     0 {$script:smokeOriginalCaseId=$script:selectedCase.caseId;Select-Workspace 'Admin'}
@@ -974,7 +954,7 @@ if ($SmokeTest) {
                         Save-TestScreenshot '-Results'
                         Save-DeliveryEditor 'Draft'
                     }
-                    8 {$ui.DeliveryReasonBox.Text='화면 자동 검증 재납품';Save-DeliveryEditor 'Published'}
+                    8 {Save-DeliveryEditor 'Published'}
                     9 {
                         if (-not $script:automaticDeliveryRefreshVerified) {throw '결과 등록 후 조회가 자동 갱신되지 않았습니다.'}
                         Select-Workspace 'Evaluation'
@@ -1002,8 +982,10 @@ if ($SmokeTest) {
                         $script:adminFormDisplayVerified=$ui.PeriodMembersGrid.Items.Count -gt 0 -and $ui.PeriodAssignmentsGrid.Columns.Count -eq 3
                         if (-not $script:adminFormDisplayVerified) {throw '월 운영의 참여자·AI 배정 폼을 표시하지 못했습니다.'}
                         Save-TestScreenshot '-Period'
-                        Select-Workspace 'Evaluation'
+                        Change-PeriodStatus 'Closed'
                     }
+                    14 {if ($script:loadedPeriod.status -ne 'Closed') {throw '사유 없이 월 마감이 저장되지 않았습니다.'};Change-PeriodStatus 'Open'}
+                    15 {if ($script:loadedPeriod.status -ne 'Open') {throw '사유 없이 재개방이 저장되지 않았습니다.'};Select-Workspace 'Evaluation'}
                 }
                 $script:smokeStage++
             }

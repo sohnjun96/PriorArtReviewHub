@@ -18,7 +18,7 @@
       <TextBlock x:Name="AdminEditorStateText" Foreground="#2257C7" Margin="0,0,0,12" TextWrapping="Wrap"/>
     </StackPanel>
     <Border DockPanel.Dock="Bottom" BorderBrush="#E0E6EF" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,14,0,0">
-      <StackPanel><TextBlock Text="수정·마감 사유" Style="{StaticResource AdminLabel}"/><TextBox x:Name="AdminReasonBox" ToolTip="월 마감과 재개방 시에는 사유를 입력하세요." Margin="0,0,0,10"/>
+      <StackPanel>
         <WrapPanel><Button x:Name="AdminSaveButton" Content="변경사항 저장" Style="{StaticResource Primary}"/><Button x:Name="AdminReloadButton" Content="목록 새로 고침"/><TextBlock x:Name="AdminSavedText" Foreground="#63738A" VerticalAlignment="Center"/></WrapPanel>
       </StackPanel>
     </Border>

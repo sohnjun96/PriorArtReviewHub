@@ -108,6 +108,12 @@ try {
         $taskAccountReader=New-Object IO.StreamReader($taskStatsZip.GetEntry('xl/worksheets/sheet2.xml').Open())
         try {[xml]$taskAccountRows=$taskAccountReader.ReadToEnd()} finally {$taskAccountReader.Dispose()}
         if ($taskAccountRows.worksheet.sheetData.row.Count -ne 2) {throw '선택한 계정 외의 계정이 통계 엑셀에 포함되었습니다.'}
+        $taskRatingReader=New-Object IO.StreamReader($taskStatsZip.GetEntry('xl/worksheets/sheet5.xml').Open())
+        try {[xml]$taskRatingRows=$taskRatingReader.ReadToEnd()} finally {$taskRatingReader.Dispose()}
+        if ($taskRatingRows.worksheet.sheetData.row.Count -ne $taskStats.statisticsExportRatingCount+1) {throw 'AI 검색 결과 평가 엑셀과 화면의 문헌 수가 다릅니다.'}
+        $taskRatingHeaders=@($taskRatingRows.worksheet.sheetData.row[0].c | ForEach-Object {$_.InnerText})
+        if (($taskRatingHeaders -join '|') -ne '출원번호|담당 심사관|AI 담당자|조사 방식|AI 검색 결과|인용여부|점수(0~5점)|평가 상태') {throw 'AI 검색 결과 평가 엑셀 열이 요청 항목과 다릅니다.'}
+        if (-not $taskRatingRows.OuterXml.Contains('X') -or -not $taskRatingRows.OuterXml.Contains('미평가')) {throw '엑셀의 인용여부와 미평가 표시가 누락되었습니다.'}
     } finally {$taskStatsZip.Dispose()}
     Write-Output 'PASS WPF statistics: group/account drilldown, filtered workbook, empty-month reset and minimum window'
 } finally {$taskProcess.Dispose()}

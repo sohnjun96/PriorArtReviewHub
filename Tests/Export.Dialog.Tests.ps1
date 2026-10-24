@@ -34,7 +34,7 @@ try {
         Export-Current $true
         Export-Current $true 'C001'
     }
-    $script:statisticsFilter=[pscustomobject]@{groups=@();accounts=@();cases=@([pscustomobject]@{applicationNumber='10-2026-1234567'});sources=@()}
+    $script:statisticsFilter=[pscustomobject]@{groups=@();accounts=@();cases=@([pscustomobject]@{applicationNumber='10-2026-1234567'});sources=@();documentEvaluations=@([pscustomobject]@{identifier='KR123';score=0;citedText='X'})}
     $script:statisticsSnapshot=[pscustomobject]@{period='2026-10';capturedAt='2026-10-24'}
     $script:ui=@{StatsScopeText=[pscustomobject]@{Text='2026-10 · 그룹 1 · 선택 계정'}}
     Export-StatisticsView
@@ -64,6 +64,7 @@ try {
     Export-StatisticsView
     Assert-Dialog ($script:bundlePromptCount -eq $promptsBefore -and $script:workArguments[0].Path -eq $script:chosenPath) 'Statistics opens the Excel chooser without a ZIP confirmation.'
     Assert-Dialog (@($script:workArguments[1]['출원별 현황']).Count -eq 1 -and $script:workArguments[1]['조회 기준'][0].scope -eq $ui.StatsScopeText.Text) 'Statistics retains the currently filtered data and scope.'
+    Assert-Dialog ($script:workArguments[1]['AI 검색 결과 평가'][0].score -eq 0 -and $script:workArguments[2]['AI 검색 결과 평가']['aiAuthor'] -eq 'AI 담당자') 'Statistics exports document evaluation rows and their requested headers.'
     function Export-Workbook($Path,$Sheets,$Columns,$Force) {Assert-Dialog ($Path -eq $script:chosenPath -and $Force) 'Statistics background export honors chosen path and confirmed overwrite.'}
     $argsForWork=$script:workArguments;& $script:work @argsForWork
     Write-Output 'PASS: Excel save dialog, all export routes, cancellation, exact filename, remembered folder, and overwrite confirmation.'

@@ -32,6 +32,7 @@ function Get-AdminStatistics {
         $aiIds=@($comparisonSources | Where-Object {$_.type -eq 'AI'} | ForEach-Object {$_.sourceId})
         $caseRows=New-Object 'System.Collections.Generic.List[object]'
         $sourceRows=New-Object 'System.Collections.Generic.List[object]'
+        $documentRows=New-Object 'System.Collections.Generic.List[object]'
         $cancelledCount=0
         foreach ($case in @(Get-Cases $Context $Period All)) {
             $captured=Invoke-FileLock -Path (Get-WCaseLock $Context $case) -Action {
@@ -71,6 +72,28 @@ function Get-AdminStatistics {
                     if ($ranking) {$rank=$ranking.rank}
                 }
                 $assignee=@($settings.assignments | Where-Object {$_.groupId -eq $actual.groupId -and $_.sourceId -eq $sourceId}) | Select-Object -First 1
+                if ($isAi -and $delivery) {
+                    $authorId=Get-WValue $delivery.data 'authorId' (Get-WValue $assignee 'userId')
+                    $authorName=Get-WValue $delivery.data 'authorName' (Get-WValue $userMap[$authorId] 'name' $authorId)
+                    $ratingsById=@{}
+                    if ($matched) {
+                        foreach ($rating in @(Get-WValue $evaluation.data 'documentRatings' @())) {
+                            if ($rating.sourceId -eq $sourceId) {$ratingsById[$rating.documentId]=$rating}
+                        }
+                    }
+                    foreach ($doc in $docs) {
+                        $rating=$ratingsById[$doc.documentId]
+                        $score=Get-WValue $rating 'score' $null;$cited=Get-WValue $rating 'cited' $null
+                        $status=if ($evaluation -and -not $matched) {'재확인 필요'} elseif ($null -ne $score -and $null -ne $cited) {'평가 완료'} elseif ($null -ne $score -or $null -ne $cited) {'평가 중'} else {'미평가'}
+                        $documentRows.Add([pscustomobject]@{
+                            caseId=$actual.caseId;groupId=$actual.groupId;userId=$actual.userId;sourceId=$sourceId;documentId=$doc.documentId
+                            applicationNumber=$actual.applicationNumber;examiner=$actual.examinerName
+                            aiAuthorId=$authorId;aiAuthor=$authorName;sourceName=(Get-WValue $delivery.data 'sourceName' (Get-WValue $source 'name' $sourceId))
+                            identifier=$doc.identifier;score=$score;cited=$cited
+                            citedText=$(if ($null -eq $cited) {'—'} elseif ($cited) {'O'} else {'X'});evaluationStatus=$status
+                        })
+                    }
+                }
                 $sourceRows.Add([pscustomobject]@{
                     caseId=$actual.caseId;userId=$actual.userId;groupId=$actual.groupId;sourceId=$sourceId
                     sourceName=(Get-WValue $source 'name' $sourceId);isAi=$isAi;assigneeId=(Get-WValue $assignee 'userId')
@@ -109,6 +132,7 @@ function Get-AdminStatistics {
         }
         [pscustomobject]@{period=$Period;periodStatus=$settings.status;capturedAt=[datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss');cancelledCount=$cancelledCount
             cases=@($caseRows.ToArray());accounts=@($accountRows.ToArray());sourceCases=@($sourceRows.ToArray())
+            documentEvaluations=@($documentRows.ToArray() | Sort-Object applicationNumber,sourceName,identifier)
             groups=@($groups | Select-Object groupId,name);sources=@($comparisonSources | Select-Object sourceId,name,type)
         }
     }
@@ -120,6 +144,7 @@ function Select-AdminStatistics {
     $cases=@($Snapshot.cases | Where-Object {(-not $GroupId -or $_.groupId -eq $GroupId) -and (-not $UserId -or $_.userId -eq $UserId)})
     $accounts=@($Snapshot.accounts | Where-Object {(-not $GroupId -or $GroupId -in $_.groupIds) -and (-not $UserId -or $_.userId -eq $UserId)})
     $sourceCases=@($Snapshot.sourceCases | Where-Object {(-not $GroupId -or $_.groupId -eq $GroupId) -and (-not $UserId -or $_.userId -eq $UserId)})
+    $documentEvaluations=@($Snapshot.documentEvaluations | Where-Object {(-not $GroupId -or $_.groupId -eq $GroupId) -and (-not $UserId -or $_.userId -eq $UserId)})
     $accountRows=@(foreach ($account in $accounts) {
         $own=@($cases | Where-Object {$_.userId -eq $account.userId})
         $tasks=@($Snapshot.sourceCases | Where-Object {$_.isAi -and $_.assigneeId -eq $account.userId -and (-not $GroupId -or $_.groupId -eq $GroupId)})
@@ -149,5 +174,5 @@ function Select-AdminStatistics {
             firstCount=@($rows | Where-Object {$_.rank -eq 1}).Count
         }
     })
-    [pscustomobject]@{summary=(Get-WStatisticsSummary -Cases $cases -Accounts $accountRows);groups=$groupRows;accounts=$accountRows;cases=$cases;sources=$sourceRows}
+    [pscustomobject]@{summary=(Get-WStatisticsSummary -Cases $cases -Accounts $accountRows);groups=$groupRows;accounts=$accountRows;cases=$cases;sources=$sourceRows;documentEvaluations=$documentEvaluations}
 }

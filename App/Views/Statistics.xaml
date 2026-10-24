@@ -68,6 +68,20 @@
               <DataGridTextColumn Header="1위 횟수" Binding="{Binding firstCount}" Width="90"/>
             </DataGrid.Columns></DataGrid>
           </StackPanel></TabItem>
+          <TabItem Header="AI 검색 결과 평가"><StackPanel Margin="12">
+            <TextBlock Text="AI 검색 결과 문헌별 평가입니다. AI 담당자는 해당 결과를 등록한 사람이며, —는 미입력입니다. 검색 결과가 바뀐 문헌은 재확인 후 점수·인용여부가 표시됩니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,8"/>
+            <TextBlock x:Name="StatsRatingsCountText" Foreground="#52647C" Margin="0,0,0,10" Text="조회된 AI 검색 결과가 없습니다."/>
+            <DataGrid x:Name="StatsRatingsGrid" Style="{StaticResource StatsGrid}" MinHeight="360" Height="420"><DataGrid.Columns>
+              <DataGridTextColumn Header="출원번호" Binding="{Binding applicationNumber}" Width="160" MinWidth="160"/>
+              <DataGridTextColumn Header="담당 심사관" Binding="{Binding examiner}" Width="105" MinWidth="105"/>
+              <DataGridTextColumn Header="AI 담당자" Binding="{Binding aiAuthor}" Width="105" MinWidth="105"/>
+              <DataGridTextColumn Header="조사 방식" Binding="{Binding sourceName}" Width="90" MinWidth="90"/>
+              <DataGridTextColumn Header="AI 검색 결과" Binding="{Binding identifier}" Width="*" MinWidth="180"/>
+              <DataGridTextColumn Header="인용여부" Binding="{Binding citedText}" Width="85" MinWidth="85"/>
+              <DataGridTextColumn Header="점수(0~5점)" Binding="{Binding score, TargetNullValue=—}" Width="105" MinWidth="105"/>
+              <DataGridTextColumn Header="평가 상태" Binding="{Binding evaluationStatus}" Width="105" MinWidth="105"/>
+            </DataGrid.Columns></DataGrid>
+          </StackPanel></TabItem>
         </TabControl>
         <TextBlock Text="미선정에는 임시저장 중인 참여자도 포함됩니다. AI 결과 입력 완료는 해당 월 AI 검색 결과가 모두 입력된 출원이며, 평가 완료는 AI 문헌 평가와 선행기술조사를 포함한 품질 순위가 완료된 출원입니다. 선행기술조사 결과 입력은 필요하지 않습니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,12,0,0"/>
       </StackPanel>

@@ -717,7 +717,7 @@ Initialize-AdminUi
 Initialize-StatisticsUi
 . (Join-Path $appDirectory 'Ui/Layout.ps1')
 foreach ($list in @($ui.CasesGrid,$ui.SubmissionRowsGrid,$ui.PublishedGrid,$ui.RankGrid,$ui.RatingsGrid,$ui.DocumentsGrid,$ui.PeriodMembersGrid,$ui.PeriodAssignmentsGrid,$ui.PeriodSourcesList)) {Enable-ReadableListScroll $list}
-foreach ($list in @($ui.StatsGroupsGrid,$ui.StatsAccountsGrid,$ui.StatsCasesGrid,$ui.StatsSourcesGrid)) {Enable-ReadableListScroll $list}
+foreach ($list in @($ui.StatsGroupsGrid,$ui.StatsAccountsGrid,$ui.StatsCasesGrid,$ui.StatsSourcesGrid,$ui.StatsRatingsGrid)) {Enable-ReadableListScroll $list}
 foreach ($list in @($ui.AdminUsersGrid,$ui.AdminGroupsGrid,$ui.GroupMembersGrid)) {Enable-ReadableListScroll $list}
 
 function Set-SessionControls {
@@ -896,18 +896,23 @@ if ($SmokeTest) {
                         $ui.StatsAccountsGrid.SelectedItem=@($ui.StatsAccountsGrid.Items | Where-Object {$_.caseCount -gt 0}) | Select-Object -First 1
                         if (-not $ui.StatsUserCombo.SelectedValue -or $ui.StatsDetailTabs.SelectedIndex -ne 2 -or $script:statisticsFilter.summary.accountCount -ne 1 -or $ui.StatsAccountsGrid.Items.Count -ne 1 -or @($ui.StatsCasesGrid.Items | Where-Object {$_.userId -ne $ui.StatsUserCombo.SelectedValue}).Count) {throw '계정 클릭 후 다른 계정의 출원이나 집계가 남았습니다.'}
                         Save-TestScreenshot '-Account'
+                        $ui.StatsDetailTabs.SelectedIndex=4;$window.UpdateLayout()
+                        if ($ui.StatsRatingsGrid.Items.Count -lt 1 -or @($ui.StatsRatingsGrid.Items | Where-Object {$_.userId -ne $ui.StatsUserCombo.SelectedValue}).Count) {throw 'AI 검색 결과 평가 목록이 선택한 계정과 일치하지 않습니다.'}
+                        if (@($ui.StatsRatingsGrid.Columns | Where-Object {$_.ActualWidth -lt $_.MinWidth}).Count) {throw 'AI 검색 결과 평가 열 너비가 줄어들어 내용을 읽을 수 없습니다.'}
                         Export-StatisticsView -OutputDirectory ([IO.Path]::GetDirectoryName($SmokeReportPath))
                     }
                     2 {
                         if (-not [IO.File]::Exists($script:statisticsExportPath)) {throw '조회 범위의 통계 엑셀이 생성되지 않았습니다.'}
                         $script:statsExportCaseCount=$script:statisticsFilter.cases.Count
+                        $script:statsExportRatingCount=$script:statisticsFilter.documentEvaluations.Count
+                        Save-TestScreenshot '-Ratings'
                         $ui.StatsDetailTabs.SelectedIndex=3;Save-TestScreenshot '-Sources'
                         $empty=@($ui.PeriodCombo.Items | Where-Object {$_.period -ne $script:statsOriginalPeriod}) | Select-Object -First 1
                         if (-not $empty) {throw '빈 운영월 검증 자료가 없습니다.'}
                         $ui.PeriodCombo.SelectedItem=$empty
                     }
                     3 {
-                        if ($script:statisticsFilter.summary.caseCount -ne 0 -or $ui.StatsCasesGrid.Items.Count -ne 0 -or $ui.StatsCasesText.Text -ne '0') {throw '빈 운영월에 이전 월의 통계가 남았습니다.'}
+                        if ($script:statisticsFilter.summary.caseCount -ne 0 -or $ui.StatsCasesGrid.Items.Count -ne 0 -or $ui.StatsCasesText.Text -ne '0' -or $ui.StatsRatingsGrid.Items.Count -ne 0) {throw '빈 운영월에 이전 월의 통계가 남았습니다.'}
                         $ui.StatsResetButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
                         if ($ui.StatsGroupCombo.SelectedValue -or $ui.StatsUserCombo.SelectedValue) {throw '전체 보기에서 필터가 초기화되지 않았습니다.'}
                         Save-TestScreenshot '-Empty'
@@ -916,9 +921,13 @@ if ($SmokeTest) {
                     4 {
                         if ($script:statisticsFilter.summary.caseCount -lt 1 -or $script:statisticsSnapshot.period -ne $script:statsOriginalPeriod) {throw '운영월 복귀 후 통계가 갱신되지 않았습니다.'}
                         $window.Width=$window.MinWidth;$window.Height=$window.MinHeight
-                        $ui.StatsScroll.ScrollToBottom();$window.UpdateLayout();Save-TestScreenshot '-Minimum'
+                        $ui.StatsDetailTabs.SelectedIndex=4
+                        $window.UpdateLayout()
+                        $ratingTop=$ui.StatsRatingsGrid.TranslatePoint((New-Object Windows.Point(0,0)),$ui.StatsScroll.Content).Y
+                        $ui.StatsScroll.ScrollToVerticalOffset($ratingTop);$window.UpdateLayout()
                     }
                     5 {
+                        Save-TestScreenshot '-Minimum'
                         $ui.StatsScroll.ScrollToTop();$window.UpdateLayout()
                         $script:statisticsFlowVerified=$true
                     }
@@ -1227,7 +1236,7 @@ if ($SmokeTest) {
                 adminRosterFlowVerified=[bool]$script:adminRosterFlowVerified
                 rankOnlyComparisonVerified=[bool]$script:rankOnlyComparisonVerified
                 statisticsVisible=($ui.StatisticsTab.Visibility -eq 'Visible');statisticsLandingVerified=[bool]$script:statisticsLandingVerified
-                statisticsFlowVerified=[bool]$script:statisticsFlowVerified;statisticsExportPath=$script:statisticsExportPath;statisticsExportCaseCount=$script:statsExportCaseCount
+                statisticsFlowVerified=[bool]$script:statisticsFlowVerified;statisticsExportPath=$script:statisticsExportPath;statisticsExportCaseCount=$script:statsExportCaseCount;statisticsExportRatingCount=$script:statsExportRatingCount
             }
             [IO.File]::WriteAllText($SmokeReportPath,(ConvertTo-Json -InputObject $report -Depth 10),(New-Object Text.UTF8Encoding($false)))
         }

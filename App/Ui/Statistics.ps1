@@ -2,7 +2,7 @@
     $reader=[Xml.XmlReader]::Create((Join-Path $appDirectory 'Views/Statistics.xaml'))
     try {$script:statisticsView=[Windows.Markup.XamlReader]::Load($reader)} finally {$reader.Close()}
     $ui.StatisticsHost.Content=$script:statisticsView
-    foreach ($name in @('StatsScopeText','StatsGroupCombo','StatsUserCombo','StatsResetButton','StatsExportButton','StatsUpdatedText','StatsScroll','StatsParticipantsText','StatsCasesText','StatsDeliveriesText','StatsEvaluationsText','StatsDeliveryRateText','StatsEvaluationRateText','StatsPendingText','StatsAccountText','StatsDetailTabs','StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid')) {$ui[$name]=$script:statisticsView.FindName($name)}
+    foreach ($name in @('StatsScopeText','StatsGroupCombo','StatsUserCombo','StatsResetButton','StatsExportButton','StatsUpdatedText','StatsScroll','StatsParticipantsText','StatsCasesText','StatsDeliveriesText','StatsEvaluationsText','StatsDeliveryRateText','StatsEvaluationRateText','StatsPendingText','StatsAccountText','StatsDetailTabs','StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid','StatsRatingsGrid','StatsRatingsCountText')) {$ui[$name]=$script:statisticsView.FindName($name)}
     $ui.StatsGroupCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Invoke-UiAction {Set-StatisticsUsers;Show-StatisticsFilter}}})
     $ui.StatsUserCombo.Add_SelectionChanged({if (-not $script:changing -and -not $script:busy) {Invoke-UiAction {Show-StatisticsFilter}}})
     $ui.StatsResetButton.Add_Click({Invoke-UiAction {$script:changing=$true;$ui.StatsGroupCombo.SelectedIndex=0;$script:changing=$false;Set-StatisticsUsers;$ui.StatsUserCombo.SelectedIndex=0;Show-StatisticsFilter;$ui.StatsDetailTabs.SelectedIndex=0}})
@@ -14,7 +14,8 @@ function Clear-Statistics {
     $script:statisticsSnapshot=$null;$script:statisticsFilter=$null
     $before=$script:changing;$script:changing=$true
     try {
-        foreach ($name in @('StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid','StatsGroupCombo','StatsUserCombo')) {$ui[$name].ItemsSource=@()}
+        foreach ($name in @('StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid','StatsRatingsGrid','StatsGroupCombo','StatsUserCombo')) {$ui[$name].ItemsSource=@()}
+        $ui.StatsRatingsCountText.Text='조회된 AI 검색 결과가 없습니다.'
         foreach ($name in @('StatsParticipantsText','StatsCasesText','StatsDeliveriesText','StatsEvaluationsText')) {$ui[$name].Text='—'}
         foreach ($name in @('StatsDeliveryRateText','StatsEvaluationRateText','StatsAccountText','StatsPendingText')) {$ui[$name].Text=''}
         $ui.StatsExportButton.IsEnabled=$false
@@ -62,6 +63,8 @@ function Show-StatisticsFilter {
     $before=$script:changing;$script:changing=$true
     try {
         $ui.StatsGroupsGrid.ItemsSource=@($view.groups);$ui.StatsAccountsGrid.ItemsSource=@($view.accounts);$ui.StatsCasesGrid.ItemsSource=@($view.cases);$ui.StatsSourcesGrid.ItemsSource=@($view.sources)
+        $ui.StatsRatingsGrid.ItemsSource=@($view.documentEvaluations)
+        $ui.StatsRatingsCountText.Text=if ($view.documentEvaluations.Count) {"AI 검색 결과 $($view.documentEvaluations.Count)건 · 열 제목을 누르면 정렬할 수 있습니다."} else {'선택한 운영월·그룹·계정에 등록된 AI 검색 결과가 없습니다.'}
         $ui.StatsParticipantsText.Text="$($summary.participantCount) / $($summary.unselectedCount)";$ui.StatsCasesText.Text=[string]$summary.caseCount
         $ui.StatsDeliveriesText.Text="$($summary.deliveredCount) / $($summary.caseCount)";$ui.StatsDeliveryRateText.Text=$summary.deliveryRate
         $ui.StatsEvaluationsText.Text="$($summary.completeCount) / $($summary.caseCount)";$ui.StatsEvaluationRateText.Text=$summary.evaluationRate
@@ -85,9 +88,10 @@ function Export-StatisticsView([string]$OutputDirectory='') {
         '계정별 현황'=[ordered]@{name='이름';bureau='심사국';division='심사과';groupName='그룹';roles='역할';activeLabel='계정';selectionStatus='대상 건 선정';caseCount='본인 출원';completeCount='평가 완료';pendingCount='평가 남음';staleCount='재확인';aiPublished='담당 입력 완료';aiAssigned='담당 결과 입력 대상';assignments='AI 배정'}
         '출원별 현황'=[ordered]@{applicationNumber='출원번호';cpc='CPC';examiner='심사관';groupName='그룹';deliveryStatus='AI 결과 입력';aiProgress='입력된 방식';evaluationStatus='평가';documentCount='문헌 수'}
         '조사 방식별 통계'=[ordered]@{sourceName='조사 방식';assessmentScope='평가 범위';expectedCount='입력 대상';publishedCount='입력 완료';pendingCount='입력 대기';documentCount='문헌 수';scoreCount='점수 입력 문헌';averageScore='평균 점수';citedCount='인용 O';citationCount='O/X 입력 문헌';citationRate='인용률';firstCount='1위 횟수'}
+        'AI 검색 결과 평가'=[ordered]@{applicationNumber='출원번호';examiner='담당 심사관';aiAuthor='AI 담당자';sourceName='조사 방식';identifier='AI 검색 결과';citedText='인용여부';score='점수(0~5점)';evaluationStatus='평가 상태'}
         '조회 기준'=[ordered]@{scope='조회 범위';capturedAt='집계 시각';rule='집계 기준'}
     }
-    $sheets=[ordered]@{'그룹별 통계'=@($view.groups);'계정별 현황'=@($view.accounts);'출원별 현황'=@($view.cases);'조사 방식별 통계'=@($view.sources);'조회 기준'=@([pscustomobject]@{scope=$ui.StatsScopeText.Text;capturedAt=$script:statisticsSnapshot.capturedAt;rule='취소·선정 초안 제외. 점수·인용은 최신 검색 결과와 일치하는 입력값만, 순위는 재확인 불필요한 평가만 집계.'})}
+    $sheets=[ordered]@{'그룹별 통계'=@($view.groups);'계정별 현황'=@($view.accounts);'출원별 현황'=@($view.cases);'조사 방식별 통계'=@($view.sources);'AI 검색 결과 평가'=@($view.documentEvaluations);'조회 기준'=@([pscustomobject]@{scope=$ui.StatsScopeText.Text;capturedAt=$script:statisticsSnapshot.capturedAt;rule='취소·선정 초안 제외. 점수·인용은 최신 검색 결과와 일치하는 입력값만, 순위는 재확인 불필요한 평가만 집계. AI 담당자는 결과 등록 당시 작성자.'})}
     Set-Status '통계 엑셀 생성 중…'
     Invoke-UiWork -Work {param($target,$sheets,$columns) Export-Workbook -Path $target.Path -Sheets $sheets -Columns $columns -Force:$target.OverwriteWorkbook} -Arguments @($target,$sheets,$columns) -Completed {
         param($result)

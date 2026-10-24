@@ -166,17 +166,26 @@ try {
     $statsView.FindName('StatsUpdatedText').Text='집계 2026-10-24 15:00:00 · 취소 출원 제외 · 최신 상태는 상단 새로 고침'
     $statsView.FindName('StatsPendingText').Text='미선정 3명 · 입력 대기 12건 · 미평가 8건 · 평가 중 2건 · 재확인 필요 1건'
     $statsScroll=$statsView.FindName('StatsScroll')
+    $statsRatings=$statsView.FindName('StatsRatingsGrid')
+    $statsRatings.ItemsSource=@(1..40 | ForEach-Object {[pscustomobject]@{applicationNumber=('10-2026-{0:0000000}' -f $_);examiner='담당 심사관';aiAuthor='AI 담당자';sourceName='ChatGPT';identifier='10-2020-1234567';citedText='O';score=5;evaluationStatus='평가 완료'}})
+    $statsView.FindName('StatsRatingsCountText').Text='AI 검색 결과 40건 · 열 제목을 누르면 정렬할 수 있습니다.'
     foreach ($size in @(@(1480,940),@(1366,728),@(1100,640))) {
         $window.Width=$size[0];$window.Height=$size[1]
-        foreach ($tabIndex in 0..3) {
+        foreach ($tabIndex in 0..4) {
             $statsView.FindName('StatsDetailTabs').SelectedIndex=$tabIndex
             $statsScroll.ScrollToBottom();Update-LayoutTest
-            $list=$statsView.FindName(@('StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid')[$tabIndex])
+            $list=$statsView.FindName(@('StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid','StatsRatingsGrid')[$tabIndex])
             if ($list.ActualHeight -lt 300 -or $statsScroll.ViewportHeight -lt 200) {Save-LayoutImage 'Statistics-Failure'}
             Assert-Layout ($list.ActualHeight -ge 300 -and $statsScroll.ViewportHeight -ge 200) "Statistics list or viewport collapsed: size=$size tab=$tabIndex list=$($list.ActualHeight) viewport=$($statsScroll.ViewportHeight)."
             $point=Point-In $list $statsScroll.Content
             Assert-Layout ($point.Y+$list.ActualHeight -le $statsScroll.ExtentHeight+1) 'Statistics list is outside the scrollable body.'
             Assert-ButtonVisible ($statsView.FindName('StatsExportButton'))
+            if ($tabIndex -eq 4) {
+                Assert-Layout ($list.ActualHeight -ge 360 -and ($list.Columns | Measure-Object ActualWidth -Sum).Sum -le $list.ActualWidth) 'Evaluation detail columns or list height do not fit the minimum window.'
+                $list.ScrollIntoView($list.Items[$list.Items.Count-1]);Update-LayoutTest
+                Assert-Layout ($null -ne $list.ItemContainerGenerator.ContainerFromIndex($list.Items.Count-1)) 'The last document evaluation cannot be reached.'
+                $list.ScrollIntoView($list.Items[0]);Update-LayoutTest
+            }
         }
         Save-LayoutImage "Statistics-$($size[0])"
     }

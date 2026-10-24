@@ -58,6 +58,7 @@ try {
     if (-not $taskAdminSession.automaticDeliveryRefreshVerified) {throw 'AI 검색 결과를 저장한 후 선택 출원의 결과·평가 화면이 자동으로 갱신되지 않았습니다.'}
     if (-not $taskAdminSession.automaticUserLoadVerified) {throw '사용자를 드롭다운에서 선택한 뒤 추가 불러오기 없이 수정할 수 없습니다.'}
     if (-not $taskAdminSession.adminFormDisplayVerified) {throw '월 운영의 참여자·AI 배정 폼을 조회한 것만으로 미저장 변경이 발생했습니다.'}
+    if (-not $taskAdminSession.caseScrollVerified) {throw '다른 출원으로 이동할 때 화면 위치 초기화 또는 같은 출원 재조회 시 위치 유지에 실패했습니다.'}
     $taskNewEvaluation=Get-Evaluation -Context $taskContext -Case $taskCase
     $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S01
     $taskNewUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '화면 등록 심사관'})[0]

@@ -87,6 +87,7 @@ $window.Height=[Math]::Min($window.Height,[Math]::Max($window.MinHeight,$desktop
 $script:ui = @{}
 $names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','DeliveryStateText','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','SaveEvaluationButton','EvaluationSavedText','AdminTab','AdminContentHost','ModeText','StatusText')
 $names += 'CaseExportButton'
+$names += @('EvaluationScroll','PublishedScroll','DeliveryScroll')
 $names += @('CaseSidebar','CaseSidebarColumn','CaseGapColumn','CaseSplitter','SelectionDraftButton','SelectionHelpText')
 $names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','SwitchUserButton','PersonalWorkTab','PersonalTabs','TargetSelectionTab','EvaluationTab','EvaluationTabs','ResultNumbersBox','AddResultNumbersButton','CaseStateCombo','CasesEmptyText','GoEvaluationButton','DocumentCountText','CaseListTitleText','CaseListHintText','WorkflowHintText')
 foreach ($name in $names) { $script:ui[$name] = $window.FindName($name) }
@@ -499,6 +500,9 @@ function Load-Cases([string]$SelectCaseId='') {
     }
 }
 function Show-CaseDetail($Case) {
+    if (-not $script:selectedCase -or $script:selectedCase.caseId -ne $Case.caseId) {
+        foreach ($scrollName in @('EvaluationScroll','PublishedScroll','DeliveryScroll')) {$ui[$scrollName].ScrollToTop()}
+    }
     Set-Status '검색 결과와 평가 자료를 불러오는 중…'
     $script:evalBaselineStamp=$null
     $script:caseDetailLoaded=$false
@@ -911,7 +915,7 @@ if ($SmokeTest) {
             $script:selectionStepPreserved=$script:activeWorkspace -eq 'Personal' -and $ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab
             return
         }
-        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 16) {
+        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 20) {
             Invoke-UiAction {
                 switch ($script:smokeStage) {
                     0 {$script:smokeOriginalCaseId=$script:selectedCase.caseId;Select-Workspace 'Admin'}
@@ -992,6 +996,25 @@ if ($SmokeTest) {
                     }
                     14 {if ($script:loadedPeriod.status -ne 'Closed') {throw '사유 없이 월 마감이 저장되지 않았습니다.'};Change-PeriodStatus 'Open'}
                     15 {if ($script:loadedPeriod.status -ne 'Open') {throw '사유 없이 재개방이 저장되지 않았습니다.'};Select-Workspace 'Evaluation'}
+                    16 {
+                        $script:scrollTestHeight=$window.Height;$window.Height=$window.MinHeight;$window.UpdateLayout()
+                        $scroll=$window.FindName('EvaluationScroll');$scroll.ScrollToBottom();$window.UpdateLayout()
+                        $script:scrollTestOffset=$scroll.VerticalOffset
+                        if ($script:scrollTestOffset -le 0) {throw '출원 전환 스크롤 검증에 필요한 스크롤 영역이 없습니다.'}
+                        Show-CaseDetail $script:selectedCase
+                    }
+                    17 {
+                        $window.UpdateLayout()
+                        if ([Math]::Abs($window.FindName('EvaluationScroll').VerticalOffset-$script:scrollTestOffset) -gt 1) {throw '같은 출원을 새로 조회할 때 평가 위치가 초기화됩니다.'}
+                        $ui.CasesGrid.SelectedItem=@($script:cases | Where-Object {$_.caseId -ne $script:selectedCase.caseId}) | Select-Object -First 1
+                    }
+                    18 {
+                        $window.UpdateLayout()
+                        if ($window.FindName('EvaluationScroll').VerticalOffset -gt 1) {throw '다른 출원을 선택해도 이전 평가의 스크롤 위치가 남습니다.'}
+                        $script:caseScrollVerified=$true
+                        $ui.CasesGrid.SelectedItem=@($script:cases | Where-Object {$_.caseId -eq $script:smokeOriginalCaseId}) | Select-Object -First 1
+                    }
+                    19 {$window.Height=$script:scrollTestHeight;$window.UpdateLayout()}
                 }
                 $script:smokeStage++
             }
@@ -1053,6 +1076,7 @@ if ($SmokeTest) {
                 dropdownBindingsVerified=[bool]$script:dropdownBindingsVerified;automaticDeliveryRefreshVerified=[bool]$script:automaticDeliveryRefreshVerified
                 automaticUserLoadVerified=[bool]$script:automaticUserLoadVerified;singleClickEditingVerified=[bool]$script:singleClickEditingVerified
                 adminFormDisplayVerified=[bool]$script:adminFormDisplayVerified
+                caseScrollVerified=[bool]$script:caseScrollVerified
             }
             [IO.File]::WriteAllText($SmokeReportPath,(ConvertTo-Json -InputObject $report -Depth 10),(New-Object Text.UTF8Encoding($false)))
         }

@@ -115,6 +115,23 @@ try {
     Assert-ExportThrows { Export-CaseBundle -Path (Join-Path $tempRoot 'duplicate.zip') -WorkbookPath $workbookPath -Attachments @(@{ path = $attachmentPath; entryName = 'A.txt' }, @{ path = $attachmentPath; entryName = 'a.txt' }) } 'Case-insensitive duplicate ZIP entry names are rejected.'
     Assert-ExportTest (-not [IO.File]::Exists((Join-Path $tempRoot 'unsafe.zip'))) 'Rejected archive was never published.'
 
+    $replacementPath=Join-Path $tempRoot '덮어쓰기.xlsx'
+    [IO.File]::WriteAllText($replacementPath,'original file')
+    $replacementSheets=[ordered]@{'확인'=@([pscustomobject]@{value='새 내용'})}
+    Assert-ExportThrows {Export-Workbook -Path $replacementPath -Sheets $replacementSheets} 'Workbook overwrite remains opt-in.'
+    $locked=[IO.File]::Open($replacementPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+    try {Assert-ExportThrows {Export-Workbook -Path $replacementPath -Sheets $replacementSheets -Force} 'An open target prevents replacement.'}
+    finally {$locked.Dispose()}
+    Assert-ExportTest ([IO.File]::ReadAllText($replacementPath) -eq 'original file') 'Failed replacement preserves the original file.'
+    $null=Export-Workbook -Path $replacementPath -Sheets $replacementSheets -Force
+    $zip=Open-ExportTestZip $replacementPath
+    try {Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('새 내용')) 'Confirmed overwrite publishes a complete workbook.'} finally {$zip.Dispose()}
+    Assert-ExportThrows {Export-CaseBundle -Path $bundlePath -WorkbookPath $replacementPath} 'Bundle overwrite remains opt-in.'
+    $null=Export-CaseBundle -Path $bundlePath -WorkbookPath $replacementPath -Force
+    $zip=Open-ExportTestZip $bundlePath
+    try {Assert-ExportTest ($zip.Entries.Count -eq 1 -and $zip.Entries[0].Name -eq '덮어쓰기.xlsx') 'Confirmed ZIP overwrite publishes the new workbook.'} finally {$zip.Dispose()}
+    Assert-ExportTest (@(Get-ChildItem -LiteralPath $tempRoot -Filter '.export-*.tmp' -Force).Count -eq 0) 'Successful and failed replacements leave no temporary exports.'
+
     # Exercise the real storage/workflow modules, including demo role boundaries.
     Import-Module (Join-Path $PSScriptRoot '..\App\Modules\Workflow.psm1') -Force
     $storeRoot = Join-Path $tempRoot 'store'
@@ -145,6 +162,14 @@ try {
     $examinerContext = Get-Context -Root $storeRoot -UserId 'U002'
     $realOwnedExport = Export-ReviewSnapshot -Context $examinerContext -Period $operationMonth -Scope Mine -OutputDirectory $tempRoot -CaseId $realCase.caseId -IncludeAttachments
     Assert-ExportTest ($realOwnedExport.documentCount -eq 3 -and [IO.File]::Exists($realOwnedExport.bundlePath)) 'Real workflow exports legacy titled and identifier-only documents with their attachment ZIP.'
+    $chosenPath=Join-Path $tempRoot '선택한 폴더\월별 평가 자료.xlsx'
+    $chosenExport=Export-ReviewSnapshot -Context $examinerContext -Period $operationMonth -Scope Mine -WorkbookPath $chosenPath -IncludeAttachments
+    Assert-ExportTest ($chosenExport.workbookPath -eq $chosenPath -and $chosenExport.bundlePath -eq [IO.Path]::ChangeExtension($chosenPath,'.zip')) 'The exact selected filename is used for both workbook and companion ZIP.'
+    $beforeHash=(Get-FileHash -LiteralPath $chosenPath).Hash
+    Assert-ExportThrows {Export-ReviewSnapshot -Context $examinerContext -Period $operationMonth -Scope Mine -WorkbookPath $chosenPath -IncludeAttachments -OverwriteWorkbook} 'Companion ZIP cannot be overwritten without its own confirmation.'
+    Assert-ExportTest ((Get-FileHash -LiteralPath $chosenPath).Hash -eq $beforeHash) 'Unconfirmed ZIP collision does not replace the workbook first.'
+    $chosenExport=Export-ReviewSnapshot -Context $examinerContext -Period $operationMonth -Scope Mine -WorkbookPath $chosenPath -IncludeAttachments -OverwriteWorkbook -OverwriteBundle
+    Assert-ExportTest ($chosenExport.documentCount -eq 3) 'Confirmed snapshot overwrite preserves the authorized case contents.'
     $zip = Open-ExportTestZip $realOwnedExport.workbookPath
     try {
         Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('평가 중')) 'A partial evaluation is labelled as in progress.'

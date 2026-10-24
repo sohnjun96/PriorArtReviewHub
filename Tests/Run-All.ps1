@@ -1,7 +1,7 @@
 ﻿param([switch]$IncludeGui)
 $ErrorActionPreference='Stop'
 $taskEngine=(Get-Process -Id $PID).Path
-foreach ($taskTestName in @('Storage.Tests.ps1','Workflow.Tests.ps1','Selection.Tests.ps1','Statistics.Tests.ps1','Export.Tests.ps1','Gui.Structure.Tests.ps1','Deployment.Tests.ps1','ExecutionPolicy.Tests.ps1')) {
+foreach ($taskTestName in @('Storage.Tests.ps1','Workflow.Tests.ps1','Selection.Tests.ps1','Statistics.Tests.ps1','Export.Tests.ps1','Export.Dialog.Tests.ps1','Gui.Structure.Tests.ps1','Deployment.Tests.ps1','ExecutionPolicy.Tests.ps1')) {
     $taskTestPath=Join-Path $PSScriptRoot $taskTestName
     if (-not (Test-Path -LiteralPath $taskTestPath)) {throw "필수 검증 파일이 없습니다: $taskTestName"}
     Write-Output "RUN $taskTestName"

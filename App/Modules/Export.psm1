@@ -84,12 +84,22 @@ function Add-ExportZipText {
 }
 
 function Get-ExportTarget {
-    param([string]$Path)
+    param([string]$Path, [switch]$Force)
     $fullPath = [System.IO.Path]::GetFullPath($Path)
-    if (Test-Path -LiteralPath $fullPath) { throw "이미 존재하는 파일에는 내보낼 수 없습니다: $fullPath" }
+    if ([System.IO.Directory]::Exists($fullPath)) { throw "파일 대신 폴더가 선택되었습니다: $fullPath" }
+    if (-not $Force -and (Test-Path -LiteralPath $fullPath)) { throw "이미 존재하는 파일에는 내보낼 수 없습니다: $fullPath" }
     $directory = [System.IO.Path]::GetDirectoryName($fullPath)
     [void][System.IO.Directory]::CreateDirectory($directory)
     return [pscustomobject]@{ Path = $fullPath; TemporaryPath = (Join-Path $directory ('.export-' + [guid]::NewGuid().ToString('N') + '.tmp')) }
+}
+
+function Complete-ExportFile($Target, [bool]$Force) {
+    # Build the complete file first, preserving the previous file if generation fails.
+    if ($Force -and [System.IO.File]::Exists($Target.Path)) {
+        [System.IO.File]::Replace($Target.TemporaryPath, $Target.Path, [NullString]::Value)
+    } else {
+        [System.IO.File]::Move($Target.TemporaryPath, $Target.Path)
+    }
 }
 
 function Export-Workbook {
@@ -97,10 +107,11 @@ function Export-Workbook {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][System.Collections.IDictionary]$Sheets,
-        [System.Collections.IDictionary]$Columns = @{}
+        [System.Collections.IDictionary]$Columns = @{},
+        [switch]$Force
     )
     if ($Sheets.Count -eq 0) { throw '통합문서에는 시트가 하나 이상 필요합니다.' }
-    $target = Get-ExportTarget $Path
+    $target = Get-ExportTarget $Path -Force:$Force
     $archive = $null
     $file = $null
     try {
@@ -192,7 +203,7 @@ function Export-Workbook {
         $archive.Dispose()
         $archive = $null
         $file = $null
-        [System.IO.File]::Move($target.TemporaryPath, $target.Path)
+        Complete-ExportFile $target ([bool]$Force)
         return $target.Path
     } finally {
         if ($null -ne $archive) { $archive.Dispose() }
@@ -223,9 +234,10 @@ function Export-CaseBundle {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$WorkbookPath,
-        [object[]]$Attachments = @()
+        [object[]]$Attachments = @(),
+        [switch]$Force
     )
-    $target = Get-ExportTarget $Path
+    $target = Get-ExportTarget $Path -Force:$Force
     $files = New-Object 'System.Collections.Generic.List[object]'
     $names = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     $items = @([pscustomobject]@{ path = $WorkbookPath; entryName = [System.IO.Path]::GetFileName($WorkbookPath) }) + @($Attachments)
@@ -257,7 +269,7 @@ function Export-CaseBundle {
         $archive.Dispose()
         $archive = $null
         $file = $null
-        [System.IO.File]::Move($target.TemporaryPath, $target.Path)
+        Complete-ExportFile $target ([bool]$Force)
         return $target.Path
     } finally {
         if ($null -ne $archive) { $archive.Dispose() }
@@ -274,15 +286,19 @@ function ConvertTo-ExportPathSegment {
 }
 
 function Export-ReviewSnapshot {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Directory')]
     param(
         [Parameter(Mandatory = $true)]$Context,
         [Parameter(Mandatory = $true)][ValidatePattern('^\d{4}-\d{2}$')][string]$Period,
         [ValidateSet('Mine', 'Assigned', 'All')][string]$Scope = 'Mine',
-        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Directory')][string]$OutputDirectory,
+        [Parameter(Mandatory = $true, ParameterSetName = 'Path')][string]$WorkbookPath,
+        [Parameter(ParameterSetName = 'Path')][switch]$OverwriteWorkbook,
+        [Parameter(ParameterSetName = 'Path')][switch]$OverwriteBundle,
         [string]$CaseId,
         [switch]$IncludeAttachments
     )
+    if ($PSCmdlet.ParameterSetName -eq 'Path' -and [IO.Path]::GetExtension($WorkbookPath) -ine '.xlsx') { throw '엑셀 파일명은 .xlsx로 끝나야 합니다.' }
     # Read the selected immutable revisions once, then build every sheet from these snapshots.
     $selectedCases = @(Get-Cases -Context $Context -Period $Period -Scope $Scope)
     if ($PSBoundParameters.ContainsKey('CaseId')) {
@@ -434,12 +450,18 @@ function Export-ReviewSnapshot {
     $ratingColumns['sourceId'] = '조사 방식 ID'; $ratingColumns['sourceName'] = '조사 방식'; $ratingColumns['documentId'] = '문헌 ID'; $ratingColumns['identifier'] = '문헌'; $ratingColumns['score'] = '점수(0~5점)'; $ratingColumns['cited'] = '인용여부(O/X)'; $ratingColumns['note'] = '비고'; $ratingColumns['needsReconfirmation'] = '재확인'
     $sheets = [ordered]@{ '출원별 현황' = $caseRows.ToArray(); '선행기술 목록' = $documentRows.ToArray(); '품질 순위' = $rankingRows.ToArray(); '문헌별 평가' = $ratingRows.ToArray() }
     $columns = @{ '출원별 현황' = $caseColumns; '선행기술 목록' = $documentColumns; '품질 순위' = $rankingColumns; '문헌별 평가' = $ratingColumns }
-    $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
-    [void][System.IO.Directory]::CreateDirectory($outputRoot)
-    $baseName = 'AI조사_{0}_{1}_{2}_{3}' -f $Period, $Scope, (Get-Date -Format 'yyyyMMdd_HHmmss_fff'), [guid]::NewGuid().ToString('N').Substring(0, 6)
-    $workbookPath = Export-Workbook -Path (Join-Path $outputRoot ($baseName + '.xlsx')) -Sheets $sheets -Columns $columns
+    if ($PSCmdlet.ParameterSetName -eq 'Directory') {
+        $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
+        $baseName = 'AI조사_{0}_{1}_{2}_{3}' -f $Period, $Scope, (Get-Date -Format 'yyyyMMdd_HHmmss_fff'), [guid]::NewGuid().ToString('N').Substring(0, 6)
+        $WorkbookPath = Join-Path $outputRoot ($baseName + '.xlsx')
+    }
     $bundlePath = $null
-    if ($IncludeAttachments) { $bundlePath = Export-CaseBundle -Path (Join-Path $outputRoot ($baseName + '.zip')) -WorkbookPath $workbookPath -Attachments $attachmentFiles.ToArray() }
+    if ($IncludeAttachments) {
+        $bundlePath = [IO.Path]::ChangeExtension([IO.Path]::GetFullPath($WorkbookPath), '.zip')
+        $null = Get-ExportTarget $bundlePath -Force:$OverwriteBundle
+    }
+    $workbookPath = Export-Workbook -Path $WorkbookPath -Sheets $sheets -Columns $columns -Force:$OverwriteWorkbook
+    if ($IncludeAttachments) { $bundlePath = Export-CaseBundle -Path $bundlePath -WorkbookPath $workbookPath -Attachments $attachmentFiles.ToArray() -Force:$OverwriteBundle }
     return [pscustomobject]@{ workbookPath = $workbookPath; bundlePath = $bundlePath; caseCount = $snapshots.Count; documentCount = $documentCount; exportedAt = [datetime]::UtcNow.ToString('o') }
 }
 

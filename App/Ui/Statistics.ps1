@@ -75,8 +75,10 @@ function Show-StatisticsFilter {
 }
 function Export-StatisticsView([string]$OutputDirectory='') {
     if (-not $script:statisticsFilter) {throw '통계를 먼저 조회하세요.'}
-    $folder=if ($OutputDirectory) {$OutputDirectory} else {Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'AI검색평가'}
-    $path=Join-Path $folder ('통계-'+$script:statisticsSnapshot.period+'-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,6)+'.xlsx')
+    $fileName='AI 검색 평가 통계_'+$script:statisticsSnapshot.period+'.xlsx'
+    # The explicit directory is used only by the unattended WPF smoke test.
+    $target=if ($OutputDirectory) {[pscustomobject]@{Path=(Join-Path $OutputDirectory ('통계-검증-'+[guid]::NewGuid().ToString('N')+'.xlsx'));OverwriteWorkbook=$false}} else {Select-ExcelExportTarget -FileName $fileName}
+    if (-not $target) {Set-Status '엑셀 저장을 취소했습니다.';return}
     $view=$script:statisticsFilter
     $columns=[ordered]@{
         '그룹별 통계'=[ordered]@{groupName='그룹';participantCount='참여 심사관';unselectedCount='미선정';caseCount='출원';deliveredCount='AI 결과 입력 완료';waitingCount='입력 대기';completeCount='평가 완료';partialCount='평가 중';unreviewedCount='미평가';staleCount='재확인';evaluationRate='평가 완료율'}
@@ -86,9 +88,10 @@ function Export-StatisticsView([string]$OutputDirectory='') {
         '조회 기준'=[ordered]@{scope='조회 범위';capturedAt='집계 시각';rule='집계 기준'}
     }
     $sheets=[ordered]@{'그룹별 통계'=@($view.groups);'계정별 현황'=@($view.accounts);'출원별 현황'=@($view.cases);'조사 방식별 통계'=@($view.sources);'조회 기준'=@([pscustomobject]@{scope=$ui.StatsScopeText.Text;capturedAt=$script:statisticsSnapshot.capturedAt;rule='취소·선정 초안 제외. 점수·인용은 최신 검색 결과와 일치하는 입력값만, 순위는 재확인 불필요한 평가만 집계.'})}
-    Invoke-UiWork -Work {param($path,$sheets,$columns) Export-Workbook -Path $path -Sheets $sheets -Columns $columns;return $path} -Arguments @($path,$sheets,$columns) -Completed {
+    Set-Status '통계 엑셀 생성 중…'
+    Invoke-UiWork -Work {param($target,$sheets,$columns) Export-Workbook -Path $target.Path -Sheets $sheets -Columns $columns -Force:$target.OverwriteWorkbook} -Arguments @($target,$sheets,$columns) -Completed {
         param($result)
         $script:statisticsExportPath=$result[-1]
-        $ui.StatsUpdatedText.Text="저장 완료 · $($result[-1])";Set-Status '현재 조회 범위의 통계를 문서 폴더의 AI검색평가 폴더에 저장했습니다.'
+        $ui.StatsUpdatedText.Text="저장 완료 · $($result[-1])";Set-Status "현재 조회 범위의 통계를 저장했습니다. · $($result[-1])"
     }
 }

@@ -709,23 +709,7 @@ function Save-EvaluationEditor {
         Set-Status '평가 저장 확인 완료.'
     }
 }
-function Export-Current([bool]$IncludeAttachments,[string]$CaseId='') {
-    $period=Get-SelectedPeriod;$scope=Get-WorkspaceScope
-    $folder=Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'AI검색평가'
-    Set-Status '다운로드 파일 생성 중…'
-    Invoke-UiWork -Work {
-        param($ctx,$period,$scope,$folder,$attachments,$caseId)
-        $exportArgs=@{Context=$ctx;Period=$period;Scope=$scope;OutputDirectory=$folder;IncludeAttachments=$attachments}
-        if ($caseId) {$exportArgs['CaseId']=$caseId}
-        Export-ReviewSnapshot @exportArgs
-    } -Arguments @($context,$period,$scope,$folder,$IncludeAttachments,$CaseId) -Completed {
-        param($result)
-        $export=$result[0]
-        $paths=@($export.workbookPath,$export.bundlePath) | Where-Object {$_}
-        Set-Status "다운로드 완료 · 출원 $($export.caseCount)건 · 문헌 $($export.documentCount)건"
-        [Windows.MessageBox]::Show($window,"문서 폴더의 AI검색평가 폴더에 저장했습니다.`n$($paths -join "`n")",'다운로드 완료','OK','Information') | Out-Null
-    }
-}
+. (Join-Path $appDirectory 'Ui/Export.ps1')
 
 . (Join-Path $appDirectory 'Ui\Admin.ps1')
 Initialize-AdminUi

@@ -125,6 +125,23 @@ try {
     Assert-Layout ($controls.PublishedGrid.ActualHeight -ge 300) 'Published result list collapsed.'
     Assert-ButtonVisible $controls.GoEvaluationButton
     $controls.MainTabs.SelectedItem=$controls.AdminTab
+    foreach ($mode in @(0,1)) {
+        $adminView.FindName('AdminUserTabs').SelectedIndex=$mode
+        $adminView.FindName('AdminUserSelectionPanel').Visibility=if ($mode -eq 0) {'Visible'} else {'Collapsed'}
+        $adminView.FindName('AdminSaveButton').Content=if ($mode -eq 0) {'변경사항 저장'} else {'사용자 등록'}
+        $adminScroll=$adminView.FindName('AdminFormScroll')
+        $adminScroll.ScrollToBottom();Update-LayoutTest
+        Save-LayoutImage "UserMode-$mode-Minimum"
+        foreach ($tab in $adminView.FindName('AdminUserTabs').Items) {
+            $point=Point-In $tab $adminView
+            Assert-Layout ($tab.IsVisible -and $tab.ActualWidth -ge 120 -and $point.X -ge 0 -and $point.X+$tab.ActualWidth -le $adminView.ActualWidth) 'User registration/management tabs are clipped at the minimum window size.'
+        }
+        $active=$adminView.FindName('UserActiveCheck');$point=Point-In $active $adminScroll
+        Assert-Layout ($adminScroll.ViewportHeight -ge 100 -and $point.Y -ge 0 -and $point.Y+$active.ActualHeight -le $adminScroll.ViewportHeight+1) "User role/activation fields cannot be reached by scrolling: mode=$mode viewport=$($adminScroll.ViewportHeight) activeTop=$($point.Y) activeHeight=$($active.ActualHeight) offset=$($adminScroll.VerticalOffset)."
+        Assert-ButtonVisible ($adminView.FindName('AdminSaveButton'))
+    }
+    $adminView.FindName('AdminUserTabs').Visibility='Collapsed'
+    $adminView.FindName('AdminUserSelectionPanel').Visibility='Collapsed'
     $adminView.FindName('UserFieldsPanel').Visibility='Collapsed'
     $adminView.FindName('PeriodFieldsPanel').Visibility='Visible';Update-LayoutTest
     Assert-Layout ($adminView.FindName('PeriodMembersGrid').ActualHeight -ge 250) 'Administrator participant list collapsed.'

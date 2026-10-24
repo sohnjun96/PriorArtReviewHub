@@ -915,13 +915,15 @@ if ($SmokeTest) {
             $script:selectionStepPreserved=$script:activeWorkspace -eq 'Personal' -and $ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab
             return
         }
-        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 20) {
+        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 24) {
             Invoke-UiAction {
                 switch ($script:smokeStage) {
                     0 {$script:smokeOriginalCaseId=$script:selectedCase.caseId;Select-Workspace 'Admin'}
                     1 {
                         $ui.AdminKindCombo.SelectedIndex=0
-                        $ui.NewUserButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        $script:smokeUserCount=$script:adminOptions.Users.Count
+                        $ui.AdminUserTabs.SelectedIndex=1
+                        if ($ui.AdminUserSelectionPanel.Visibility -ne 'Collapsed' -or $ui.AdminSaveButton.Content -ne '사용자 등록' -or $ui.UserNameBox.Text -or $script:adminLoadedId) {throw '신규 등록 화면에 기존 사용자 선택이나 정보가 남습니다.'}
                     }
                     2 {
                         $ui.UserNameBox.Text='화면 등록 심사관';$ui.UserBureauBox.Text='화면 등록 심사국';$ui.UserDivisionBox.Text='화면 등록 심사과'
@@ -929,7 +931,11 @@ if ($SmokeTest) {
                         $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
                     }
                     3 {
-                        $newUserId=$script:adminLoadedId
+                        if ($ui.AdminUserTabs.SelectedIndex -ne 1 -or $ui.UserNameBox.Text -or $script:adminLoadedId -or $ui.AdminUserCombo.SelectedItem -or $script:adminDirty -or $ui.AdminSavedText.Text -notlike '*등록 완료') {throw '사용자 등록 후 신규 양식과 완료 안내가 표시되지 않았습니다.'}
+                        $script:smokeRegisteredUserId=$script:adminLastUserId
+                        $newUserId=$script:smokeRegisteredUserId
+                        $ui.AdminUserTabs.SelectedIndex=0
+                        if ($script:adminLoadedId -ne $newUserId -or $ui.AdminUserSelectionPanel.Visibility -ne 'Visible' -or $ui.AdminSaveButton.Content -ne '변경사항 저장') {throw '기존 사용자 관리 탭에서 방금 등록한 사용자를 조회하지 못했습니다.'}
                         $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq 'U002'}) | Select-Object -First 1
                         $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq $newUserId}) | Select-Object -First 1
                         $script:automaticUserLoadVerified=$ui.UserNameBox.Text -eq '화면 등록 심사관' -and $ui.UserDivisionBox.Text -eq '화면 등록 심사과'
@@ -1015,6 +1021,30 @@ if ($SmokeTest) {
                         $ui.CasesGrid.SelectedItem=@($script:cases | Where-Object {$_.caseId -eq $script:smokeOriginalCaseId}) | Select-Object -First 1
                     }
                     19 {$window.Height=$script:scrollTestHeight;$window.UpdateLayout()}
+                    20 {Select-Workspace 'Admin'}
+                    21 {
+                        $ui.AdminKindCombo.SelectedIndex=0;$ui.AdminUserTabs.SelectedIndex=0
+                        $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq $script:smokeRegisteredUserId}) | Select-Object -First 1
+                        $ui.UserBureauBox.Text='수정한 심사국';$ui.UserAiCheck.IsChecked=$true;$ui.UserActiveCheck.IsChecked=$false
+                        $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    22 {
+                        if ($script:adminLoadedId -ne $script:smokeRegisteredUserId -or $script:adminVersion -ne 2 -or $script:adminOptions.Users.Count -ne $script:smokeUserCount+1 -or $ui.AdminUserTabs.SelectedIndex -ne 0 -or $ui.UserActiveCheck.IsChecked) {throw '기존 사용자 수정이 신규 등록으로 처리되거나 수정 화면이 유지되지 않았습니다.'}
+                        Save-TestScreenshot '-Users-Manage'
+                        $ui.AdminUserTabs.SelectedIndex=1
+                        if ($ui.UserNameBox.Text -or $ui.UserBureauBox.Text -or $ui.UserDivisionBox.Text -or -not $ui.UserExaminerCheck.IsChecked -or $ui.UserAiCheck.IsChecked -or $ui.UserAdminCheck.IsChecked -or -not $ui.UserActiveCheck.IsChecked) {throw '신규 등록 양식에 수정한 사용자의 소속·역할·비활성 상태가 남았습니다.'}
+                        $ui.UserNameBox.Text='연속 등록 심사관'
+                        $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    23 {
+                        if ($script:adminOptions.Users.Count -ne $script:smokeUserCount+2 -or $script:adminLastUserId -eq $script:smokeRegisteredUserId -or $ui.UserNameBox.Text -or $script:adminDirty) {throw '연속 등록이 별개의 사용자로 저장되지 않았습니다.'}
+                        Save-TestScreenshot '-Users-Registered'
+                        $ui.AdminUserTabs.SelectedIndex=0
+                        $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq $script:smokeRegisteredUserId}) | Select-Object -First 1
+                        if ($ui.UserBureauBox.Text -ne '수정한 심사국' -or $ui.UserActiveCheck.IsChecked -or -not $ui.UserAiCheck.IsChecked -or $ui.AdminUserCombo.SelectedItem.displayName -notlike '*(비활성)') {throw '비활성 사용자의 변경사항을 다시 불러오지 못했습니다.'}
+                        $script:separateUserFlowsVerified=$true
+                        Select-Workspace 'Evaluation'
+                    }
                 }
                 $script:smokeStage++
             }
@@ -1077,6 +1107,7 @@ if ($SmokeTest) {
                 automaticUserLoadVerified=[bool]$script:automaticUserLoadVerified;singleClickEditingVerified=[bool]$script:singleClickEditingVerified
                 adminFormDisplayVerified=[bool]$script:adminFormDisplayVerified
                 caseScrollVerified=[bool]$script:caseScrollVerified
+                separateUserFlowsVerified=[bool]$script:separateUserFlowsVerified
             }
             [IO.File]::WriteAllText($SmokeReportPath,(ConvertTo-Json -InputObject $report -Depth 10),(New-Object Text.UTF8Encoding($false)))
         }

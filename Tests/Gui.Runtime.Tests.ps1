@@ -59,10 +59,13 @@ try {
     if (-not $taskAdminSession.automaticUserLoadVerified) {throw '사용자를 드롭다운에서 선택한 뒤 추가 불러오기 없이 수정할 수 없습니다.'}
     if (-not $taskAdminSession.adminFormDisplayVerified) {throw '월 운영의 참여자·AI 배정 폼을 조회한 것만으로 미저장 변경이 발생했습니다.'}
     if (-not $taskAdminSession.caseScrollVerified) {throw '다른 출원으로 이동할 때 화면 위치 초기화 또는 같은 출원 재조회 시 위치 유지에 실패했습니다.'}
+    if (-not $taskAdminSession.separateUserFlowsVerified) {throw '신규 사용자 등록과 기존 사용자 수정·비활성화 절차가 분리되지 않았습니다.'}
     $taskNewEvaluation=Get-Evaluation -Context $taskContext -Case $taskCase
     $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S01
     $taskNewUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '화면 등록 심사관'})[0]
-    if ($taskNewUser.name -ne '화면 등록 심사관' -or $taskNewUser.bureau -ne '화면 등록 심사국' -or $taskNewUser.division -ne '화면 등록 심사과') {throw '사용자 폼의 심사국·심사과가 저장되지 않았습니다.'}
+    if ($taskNewUser.name -ne '화면 등록 심사관' -or $taskNewUser.bureau -ne '수정한 심사국' -or $taskNewUser.division -ne '화면 등록 심사과' -or $taskNewUser.active -or 'ai' -notin $taskNewUser.roles -or $taskNewUser.version -ne 2) {throw '기존 사용자 관리에서 소속·역할·비활성화 변경이 저장되지 않았습니다.'}
+    $taskSecondUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '연속 등록 심사관'})
+    if ($taskSecondUser.Count -ne 1 -or $taskSecondUser[0].userId -eq $taskNewUser.userId -or -not $taskSecondUser[0].active -or ($taskSecondUser[0].roles -join '|') -ne 'examiner' -or $taskSecondUser[0].bureau -or $taskSecondUser[0].division) {throw '연속 등록 사용자의 식별번호 또는 기본값이 올바르지 않습니다.'}
     if ($taskNewUser.userId -notmatch '^U[a-f0-9]{32}$' -or $taskNewUser.sid -notmatch '^APP-[a-f0-9]{32}$') {throw '사용자 식별번호가 자동 생성되지 않았습니다.'}
     $taskNewCase=@(Get-Cases -Context $taskContext -Period $taskPeriod -Scope Mine | Where-Object {$_.applicationNumber -eq '10-2026-0000456'})[0]
     if ($taskNewCase.cpc -ne 'H04L 9/00' -or $taskNewCase.examinerBureau -ne '검증 심사국' -or $taskNewCase.examinerDivision -ne '검증 심사과') {throw '출원 화면의 CPC·소속 스냅샷이 저장되지 않았습니다.'}

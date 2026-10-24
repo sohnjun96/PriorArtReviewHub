@@ -4,6 +4,16 @@ function Get-AdminKind {
     if ($ui.AdminKindCombo.SelectedItem) {return [string]$ui.AdminKindCombo.SelectedItem.Tag}
     return 'Users'
 }
+function Test-NewUserMode {return $ui.AdminUserTabs.SelectedIndex -eq 1}
+function Show-NewUserForm {
+    $before=$script:changing;$script:changing=$true
+    try {
+        $ui.AdminUserTabs.SelectedIndex=1;$ui.AdminUserCombo.SelectedIndex=-1
+        $ui.AdminFormScroll.ScrollToTop()
+        [void]$script:requests.Remove('master:Users:')
+        Show-AdminRecord ([pscustomobject]@{name='';bureau='';division='';roles=@('examiner');active=$true}) 'Users'
+    } finally {$script:changing=$before}
+}
 function Copy-AdminData($Data) {
     if ($null -eq $Data) {return [pscustomobject]@{}}
     $clean=$Data | Select-Object * -ExcludeProperty version,path,displayName
@@ -71,7 +81,7 @@ function Refresh-AdminOptions([string]$SelectedKind='',[string]$SelectedId='') {
             if ($SelectedKind -eq $kind) {$oldId=$SelectedId}
             $selector.ItemsSource=@($script:adminOptions[$kind])
             $selector.SelectedItem=@($script:adminOptions[$kind] | Where-Object {(Get-AdminId $_ $kind) -eq $oldId}) | Select-Object -First 1
-            if (-not $selector.SelectedItem -and $selector.Items.Count -gt 0) {$selector.SelectedIndex=0}
+            if (-not $selector.SelectedItem -and $selector.Items.Count -gt 0 -and -not ($kind -eq 'Users' -and (Test-NewUserMode))) {$selector.SelectedIndex=0}
         }
         $ui.UserBureauBox.ItemsSource=@($script:adminOptions.Users | ForEach-Object {[string](Get-UiValue $_ 'bureau')} | Where-Object {$_} | Sort-Object -Unique)
         Update-AdminDivisionOptions
@@ -121,7 +131,14 @@ function Update-AdminEditor {
         $selector=Get-AdminSelector $item[0];$selector.Visibility=if ($kind -eq $item[0]) {'Visible'} else {'Collapsed'}
     }
     $ui.AdminSaveButton.IsEnabled=($kind -eq $script:adminLoadedKind)
-    $ui.NewUserButton.Content=@{Users='신규 사용자';Groups='신규 그룹';Sources='신규 조사 방식';Period='신규 월'}[$kind]
+    $newUser=$kind -eq 'Users' -and (Test-NewUserMode)
+    $ui.AdminUserTabs.Visibility=if ($kind -eq 'Users') {'Visible'} else {'Collapsed'}
+    $ui.AdminUserSelectionPanel.Visibility=if ($kind -eq 'Users' -and -not $newUser) {'Visible'} else {'Collapsed'}
+    $ui.NewUserButton.Visibility=if ($kind -eq 'Users') {'Collapsed'} else {'Visible'}
+    $ui.NewUserButton.Content=@{Users='신규 항목';Groups='신규 그룹';Sources='신규 조사 방식';Period='신규 월'}[$kind]
+    $ui.UserFormTitle.Text=if ($newUser) {'신규 사용자 정보 입력'} else {'기존 사용자 정보 수정'}
+    $ui.AdminSaveButton.Content=if ($newUser) {'사용자 등록'} else {'변경사항 저장'}
+    $ui.AdminReloadButton.Visibility=if ($newUser) {'Collapsed'} else {'Visible'}
 }
 function Show-AdminRecord($Data,[string]$Kind) {
     $before=$script:changing;$script:changing=$true
@@ -133,7 +150,11 @@ function Show-AdminRecord($Data,[string]$Kind) {
         $script:adminIsNewUser=$script:adminIsNew -and $Kind -eq 'Users'
         $ui.AdminSavedText.Text=''
         switch ($Kind) {
-            'Users' {Set-UserForm $Data}
+            'Users' {
+                $ui.AdminUserTabs.SelectedIndex=if ($script:adminIsNewUser) {1} else {0}
+                if (-not $script:adminIsNewUser) {$script:adminLastUserId=$script:adminLoadedId}
+                Set-UserForm $Data
+            }
             'Groups' {$ui.GroupNameBox.Text=[string](Get-UiValue $Data 'name');$ui.GroupActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true)}
             'Sources' {$ui.SourceNameBox.Text=[string](Get-UiValue $Data 'name');$ui.SourceTypeCombo.SelectedValue=[string](Get-UiValue $Data 'type' 'AI');$ui.SourceActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true)}
             'Period' {
@@ -155,6 +176,9 @@ function Show-AdminRecord($Data,[string]$Kind) {
         }
         Update-AdminEditor
         $label=if ($script:adminIsNew) {'새 항목 · 입력한 내용을 저장하세요.'} else {"수정 후 저장하세요."}
+        if ($Kind -eq 'Users') {
+            $label=if ($script:adminIsNewUser) {'성명과 소속·역할을 입력한 뒤 사용자 등록을 누르세요. 식별번호는 자동으로 부여됩니다.'} else {"수정 대상: $($Data.name) · 정보를 변경한 뒤 변경사항 저장을 누르세요."}
+        }
         $ui.AdminEditorStateText.Text=$label
         $script:adminBaselineStamp=Get-AdminInputStamp
         $script:adminDirty=$false
@@ -162,16 +186,28 @@ function Show-AdminRecord($Data,[string]$Kind) {
 }
 function Select-AdminRecord {
     $kind=Get-AdminKind;$selector=Get-AdminSelector $kind
+    $ui.AdminFormScroll.ScrollToTop()
+    if ($kind -eq 'Users' -and (Test-NewUserMode)) {Show-NewUserForm;return}
+    if ($kind -eq 'Users' -and -not $selector.SelectedItem) {
+        $before=$script:changing;$script:changing=$true
+        try {
+            $selector.SelectedItem=@($selector.ItemsSource | Where-Object {$_.userId -eq $script:adminLastUserId}) | Select-Object -First 1
+            if (-not $selector.SelectedItem -and $selector.Items.Count -gt 0) {$selector.SelectedIndex=0}
+        } finally {$script:changing=$before}
+    }
     if ($selector.SelectedItem) {Show-AdminRecord $selector.SelectedItem $kind}
     else {
         $script:adminLoadedKind=$null;$script:adminLoadedId='';$script:adminVersion=0;$script:adminDirty=$false
+        if ($kind -eq 'Users') {Set-UserForm $null}
         Update-AdminEditor;$ui.AdminEditorStateText.Text='등록된 항목이 없습니다. 신규 버튼을 눌러 등록하세요.'
+        if ($kind -eq 'Users') {$ui.AdminEditorStateText.Text='등록된 사용자가 없습니다. 신규 사용자 등록 탭에서 사용자를 추가하세요.'}
     }
 }
 function Restore-AdminSelection {
     $before=$script:changing;$script:changing=$true
     try {
         foreach ($item in $ui.AdminKindCombo.Items) {if ($item.Tag -eq $script:adminLoadedKind) {$ui.AdminKindCombo.SelectedItem=$item;break}}
+        if ($script:adminLoadedKind -eq 'Users') {$ui.AdminUserTabs.SelectedIndex=if ($script:adminIsNewUser) {1} else {0}}
         $selector=Get-AdminSelector $script:adminLoadedKind
         if ($selector) {$selector.SelectedItem=@($selector.ItemsSource | Where-Object {(Get-AdminId $_ $script:adminLoadedKind) -eq $script:adminLoadedId}) | Select-Object -First 1}
         Update-AdminEditor
@@ -180,8 +216,8 @@ function Restore-AdminSelection {
 function New-AdminRecord {
     if ($script:adminDirty -and -not (Confirm-Discard)) {return}
     $kind=Get-AdminKind;$id=''
+    if ($kind -eq 'Users') {Show-NewUserForm;return}
     switch ($kind) {
-        'Users' {$data=[pscustomobject]@{name='';bureau='';division='';roles=@('examiner');active=$true}}
         'Groups' {$id='G'+[guid]::NewGuid().ToString('N');$data=[pscustomobject]@{groupId=$id;name='';active=$true}}
         'Sources' {$id='S'+[guid]::NewGuid().ToString('N');$data=[pscustomobject]@{sourceId=$id;name='';type='AI';active=$true}}
         'Period' {
@@ -213,7 +249,10 @@ function Read-UserForm {
 function Read-AdminForm {
     $kind=Get-AdminKind
     if ($kind -ne $script:adminLoadedKind) {throw '수정할 대상을 먼저 선택하거나 신규 버튼을 누르세요.'}
-    if ($kind -eq 'Users') {return Read-UserForm}
+    if ($kind -eq 'Users') {
+        if ((Test-NewUserMode) -ne [bool]$script:adminIsNewUser) {throw '사용자 등록 또는 기존 사용자 관리 화면을 다시 선택하세요.'}
+        return Read-UserForm
+    }
     $data=Copy-AdminData $script:adminOriginal
     switch ($kind) {
         'Groups' {Set-AdminField $data 'name' $ui.GroupNameBox.Text.Trim();Set-AdminField $data 'active' ([bool]$ui.GroupActiveCheck.IsChecked)}
@@ -247,11 +286,17 @@ function Save-AdminForm {
     } -Arguments @($context,$payload,$request) -Completed {
         param($result)
         $saved=$result[0];$kind=$script:adminLoadedKind;$id=Get-AdminId $saved $kind
+        $registered=$kind -eq 'Users' -and $script:adminIsNewUser
         if ($kind -eq 'Users' -and $id -eq $context.User.userId) {$script:context=Get-Context -Root $context.Root -UserId $id -AccessMode $script:launchMode;Set-Identity}
         Refresh-AdminOptions -SelectedKind $kind -SelectedId $id
         $script:allGroups=@($script:adminOptions.Groups);$script:allSources=@($script:adminOptions.Sources)
-        Show-AdminRecord $saved $kind
-        $ui.AdminSavedText.Text='저장 완료';$ui.AdminSavedText.Foreground='#147D57'
+        if ($registered) {
+            $script:adminLastUserId=$id
+            Show-NewUserForm
+            $ui.AdminSavedText.Text="$($saved.name) 등록 완료"
+            $ui.AdminEditorStateText.Text='등록을 완료했습니다. 다음 사용자를 입력하거나 기존 사용자 관리 탭에서 등록한 정보를 확인하세요.'
+        } else {Show-AdminRecord $saved $kind;$ui.AdminSavedText.Text='변경사항 저장 완료'}
+        $ui.AdminSavedText.Foreground='#147D57'
         if ($kind -eq 'Period') {Sync-AdminPeriodList $id;Load-Cases}
         else {Set-Status "설정 저장 완료 · 목록에 즉시 반영했습니다."}
     }
@@ -277,11 +322,11 @@ function Change-PeriodStatus([string]$Status) {
     }
 }
 function Reset-AdminEditor {
-    $script:adminDirty=$false;$script:adminBaselineStamp='';$script:adminVersion=0;$script:adminLoadedKind=$null;$script:adminLoadedId='';$script:adminOriginal=[pscustomobject]@{};$script:adminIsNew=$false;$script:adminIsNewUser=$false
+    $script:adminDirty=$false;$script:adminBaselineStamp='';$script:adminVersion=0;$script:adminLoadedKind=$null;$script:adminLoadedId='';$script:adminOriginal=[pscustomobject]@{};$script:adminIsNew=$false;$script:adminIsNewUser=$false;$script:adminLastUserId=''
     $script:adminOptions=@{Users=@();Groups=@();Sources=@();Period=@()}
     $before=$script:changing;$script:changing=$true
     try {
-        $script:adminMembers.Clear();$script:adminAssignments.Clear();$ui.AdminKindCombo.SelectedIndex=0
+        $script:adminMembers.Clear();$script:adminAssignments.Clear();$ui.AdminKindCombo.SelectedIndex=0;$ui.AdminUserTabs.SelectedIndex=0
         foreach ($kind in @('Users','Groups','Sources','Period')) {(Get-AdminSelector $kind).ItemsSource=@()}
         Update-AdminEditor
         if ('admin' -in $context.User.roles) {Refresh-AdminOptions;Select-AdminRecord}
@@ -297,6 +342,7 @@ function Initialize-AdminUi {
     $reader=[Xml.XmlReader]::Create((Join-Path $appDirectory 'Views\Admin.xaml'))
     try {$script:adminView=[Windows.Markup.XamlReader]::Load($reader)} finally {$reader.Close()}
     $ui.AdminContentHost.Content=$script:adminView
+    foreach ($name in @('AdminUserTabs','AdminUserSelectionPanel','UserFormTitle','AdminFormScroll')) {$ui[$name]=$script:adminView.FindName($name)}
     foreach ($name in @('AdminKindCombo','AdminUserCombo','AdminGroupCombo','AdminSourceCombo','AdminPeriodCombo','NewUserButton','AdminEditorStateText','AdminSaveButton','AdminReloadButton','AdminSavedText','UserFieldsPanel','UserNameBox','UserBureauBox','UserDivisionBox','UserExaminerCheck','UserAiCheck','UserAdminCheck','UserActiveCheck','GroupFieldsPanel','GroupNameBox','GroupActiveCheck','SourceFieldsPanel','SourceNameBox','SourceTypeCombo','SourceActiveCheck','PeriodFieldsPanel','PeriodStateText','ClosePeriodButton','ReopenPeriodButton','PeriodYearCombo','PeriodMonthCombo','PeriodLimitCombo','SubmissionDeadlinePicker','DeliveryDeadlinePicker','EvaluationDeadlinePicker','PeriodSourcesList','PeriodMembersGrid','PeriodAssignmentsGrid','AddPeriodMemberButton','RemovePeriodMemberButton','AddPeriodAssignmentButton','RemovePeriodAssignmentButton')) {$ui[$name]=$script:adminView.FindName($name)}
     $script:adminMembers=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]';$script:adminAssignments=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
     $ui.PeriodMembersGrid.AutoGenerateColumns=$false;$ui.PeriodAssignmentsGrid.AutoGenerateColumns=$false
@@ -306,6 +352,11 @@ function Initialize-AdminUi {
     Add-AdminDropColumn $ui.PeriodAssignmentsGrid 'AI 담당자' 'userId' 'AdminAiUserOptions' 'userId';Add-AdminDropColumn $ui.PeriodAssignmentsGrid '그룹' 'groupId' 'AdminGroupOptions' 'groupId';Add-AdminDropColumn $ui.PeriodAssignmentsGrid 'AI 조사 방식' 'sourceId' 'AdminAiSourceOptions' 'sourceId'
     $year=(Get-Date).Year;$ui.PeriodYearCombo.ItemsSource=@(($year-10)..($year+10));$ui.PeriodMonthCombo.ItemsSource=@(1..12);$ui.PeriodLimitCombo.ItemsSource=@('0','1','2','3','5','10','15','20','30','50','100')
     $ui.AdminKindCombo.Add_SelectionChanged({if ($script:changing -or $script:busy) {return};Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {Restore-AdminSelection;return};Update-AdminEditor;Select-AdminRecord}})
+    $ui.AdminUserTabs.Add_SelectionChanged({
+        param($sender,$eventArgs)
+        if ($eventArgs.Source -ne $ui.AdminUserTabs -or $script:changing -or $script:busy) {return}
+        Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {Restore-AdminSelection;return};Select-AdminRecord}
+    })
     foreach ($selector in @($ui.AdminUserCombo,$ui.AdminGroupCombo,$ui.AdminSourceCombo,$ui.AdminPeriodCombo)) {$selector.Add_SelectionChanged({if ($script:changing -or $script:busy) {return};Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {Restore-AdminSelection;return};Select-AdminRecord}})}
     $ui.NewUserButton.Add_Click({Invoke-UiAction {New-AdminRecord}});$ui.AdminSaveButton.Add_Click({Invoke-UiAction {Save-AdminForm}})
     $ui.AdminReloadButton.Add_Click({Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {return};$kind=Get-AdminKind;$id=$script:adminLoadedId;Refresh-AdminOptions -SelectedKind $kind -SelectedId $id;Select-AdminRecord;Set-Status '운영 목록을 새로 불러왔습니다.'}})

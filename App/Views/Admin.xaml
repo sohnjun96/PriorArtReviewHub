@@ -4,28 +4,27 @@
     <Style x:Key="AdminLabel" TargetType="TextBlock"><Setter Property="Foreground" Value="#52647C"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
     <Style x:Key="AdminSection" TargetType="TextBlock"><Setter Property="FontSize" Value="17"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,14"/><Setter Property="Foreground" Value="#172B4D"/></Style>
   </UserControl.Resources>
-  <DockPanel Margin="20">
+  <DockPanel Margin="16">
     <StackPanel DockPanel.Dock="Top">
-      <TextBlock Text="운영 관리" FontSize="22" FontWeight="SemiBold" Foreground="#172B4D"/>
-      <TextBlock Text="관리할 항목과 대상을 선택하면 바로 수정할 수 있습니다." Foreground="#64748B" Margin="0,6,0,14"/>
-      <Border Background="#F4F7FC" CornerRadius="7" Padding="12" Margin="0,0,0,14">
-        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="135"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <Border Background="#F4F7FC" CornerRadius="7" Padding="10" Margin="0,0,0,10">
+        <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="135"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <ComboBox x:Name="AdminKindCombo"><ComboBoxItem Content="사용자" Tag="Users"/><ComboBoxItem Content="그룹" Tag="Groups"/><ComboBoxItem Content="조사 방식" Tag="Sources"/><ComboBoxItem Content="월 운영" Tag="Period"/></ComboBox>
-          <Grid Grid.Column="1" Margin="10,0"><ComboBox x:Name="AdminUserCombo" DisplayMemberPath="displayName" SelectedValuePath="userId"/><ComboBox x:Name="AdminGroupCombo" DisplayMemberPath="displayName" SelectedValuePath="groupId" Visibility="Collapsed"/><ComboBox x:Name="AdminSourceCombo" DisplayMemberPath="displayName" SelectedValuePath="sourceId" Visibility="Collapsed"/><ComboBox x:Name="AdminPeriodCombo" DisplayMemberPath="displayName" SelectedValuePath="period" Visibility="Collapsed"/></Grid>
-          <Button x:Name="NewUserButton" Grid.Column="2" Content="신규 사용자" Margin="0"/>
+          <Grid Grid.Column="1" Margin="10,0"><TabControl x:Name="AdminUserTabs" BorderThickness="0" Background="Transparent" SelectedIndex="0"><TabItem Header="기존 사용자 관리" Padding="14,8"/><TabItem Header="신규 사용자 등록" Padding="14,8"/></TabControl><ComboBox x:Name="AdminGroupCombo" DisplayMemberPath="displayName" SelectedValuePath="groupId" Visibility="Collapsed"/><ComboBox x:Name="AdminSourceCombo" DisplayMemberPath="displayName" SelectedValuePath="sourceId" Visibility="Collapsed"/><ComboBox x:Name="AdminPeriodCombo" DisplayMemberPath="displayName" SelectedValuePath="period" Visibility="Collapsed"/></Grid>
+          <Button x:Name="NewUserButton" Grid.Column="2" Content="신규 항목" Margin="0" Visibility="Collapsed"/>
+          <Grid x:Name="AdminUserSelectionPanel" Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="135"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="관리할 사용자" VerticalAlignment="Center" Foreground="#52647C"/><ComboBox x:Name="AdminUserCombo" Grid.Column="1" Margin="10,0,0,0" DisplayMemberPath="displayName" SelectedValuePath="userId"/></Grid>
         </Grid>
       </Border>
-      <TextBlock x:Name="AdminEditorStateText" Foreground="#2257C7" Margin="0,0,0,12" TextWrapping="Wrap"/>
     </StackPanel>
-    <Border DockPanel.Dock="Bottom" BorderBrush="#E0E6EF" BorderThickness="0,1,0,0" Padding="0,14,0,0" Margin="0,14,0,0">
+    <Border DockPanel.Dock="Bottom" BorderBrush="#E0E6EF" BorderThickness="0,1,0,0" Padding="0,10,0,0" Margin="0,10,0,0">
       <StackPanel>
         <WrapPanel><Button x:Name="AdminSaveButton" Content="변경사항 저장" Style="{StaticResource Primary}"/><Button x:Name="AdminReloadButton" Content="목록 새로 고침"/><TextBlock x:Name="AdminSavedText" Foreground="#63738A" VerticalAlignment="Center"/></WrapPanel>
       </StackPanel>
     </Border>
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer x:Name="AdminFormScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
+        <TextBlock x:Name="AdminEditorStateText" Foreground="#2257C7" Margin="0,0,0,12" TextWrapping="Wrap"/>
         <StackPanel x:Name="UserFieldsPanel">
-          <TextBlock Text="사용자 정보" Style="{StaticResource AdminSection}"/>
+          <TextBlock x:Name="UserFormTitle" Text="기존 사용자 정보 수정" Style="{StaticResource AdminSection}"/>
           <TextBlock Text="성명" Style="{StaticResource AdminLabel}"/><TextBox x:Name="UserNameBox" MaxLength="100"/>
           <Grid Margin="0,15,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><StackPanel Margin="0,0,8,0"><TextBlock Text="심사국" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="UserBureauBox" IsEditable="True" IsTextSearchEnabled="True" ToolTip="기존 심사국을 선택하거나 새 심사국을 입력하세요."/></StackPanel><StackPanel Grid.Column="1" Margin="8,0,0,0"><TextBlock Text="심사과" Style="{StaticResource AdminLabel}"/><ComboBox x:Name="UserDivisionBox" IsEditable="True" IsTextSearchEnabled="True" ToolTip="기존 심사과를 선택하거나 새 심사과를 입력하세요."/></StackPanel></Grid>
           <TextBlock Text="역할 · 여러 개 선택 가능" Style="{StaticResource AdminLabel}" Margin="0,18,0,10"/><WrapPanel><CheckBox x:Name="UserExaminerCheck" Content="심사관" Margin="0,0,22,10"/><CheckBox x:Name="UserAiCheck" Content="AI 담당자" Margin="0,0,22,10"/><CheckBox x:Name="UserAdminCheck" Content="총괄관리자" Margin="0,0,0,10"/></WrapPanel><CheckBox x:Name="UserActiveCheck" Content="활성 사용자" Margin="0,8,0,10"/>

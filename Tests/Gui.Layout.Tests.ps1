@@ -146,5 +146,29 @@ try {
     $adminView.FindName('PeriodFieldsPanel').Visibility='Visible';Update-LayoutTest
     Assert-Layout ($adminView.FindName('PeriodMembersGrid').ActualHeight -ge 250) 'Administrator participant list collapsed.'
     Assert-ButtonVisible ($adminView.FindName('AdminSaveButton'))
+    $statsView=Read-LayoutView Statistics
+    $window.FindName('StatisticsHost').Content=$statsView
+    $controls.MainTabs.SelectedItem=$window.FindName('StatisticsTab')
+    $window.FindName('CaseSidebar').Visibility='Collapsed';$window.FindName('CaseSidebarColumn').MinWidth=0;$window.FindName('CaseSidebarColumn').Width=0;$window.FindName('CaseGapColumn').Width=0
+    $window.FindName('CaseHeaderPanel').Visibility='Collapsed';$window.FindName('CaseHeaderRow').Height=0
+    $statsView.FindName('StatsScopeText').Text='2026-10 · 운영 중 · 전체 그룹 · 전체 계정'
+    $statsView.FindName('StatsUpdatedText').Text='집계 2026-10-24 15:00:00 · 취소 출원 제외 · 최신 상태는 상단 새로 고침'
+    $statsView.FindName('StatsPendingText').Text='미선정 3명 · 납품 대기 12건 · 미평가 8건 · 평가 중 2건 · 재확인 필요 1건'
+    $statsScroll=$statsView.FindName('StatsScroll')
+    foreach ($size in @(@(1480,940),@(1366,728),@(1100,640))) {
+        $window.Width=$size[0];$window.Height=$size[1]
+        foreach ($tabIndex in 0..3) {
+            $statsView.FindName('StatsDetailTabs').SelectedIndex=$tabIndex
+            $statsScroll.ScrollToBottom();Update-LayoutTest
+            $list=$statsView.FindName(@('StatsGroupsGrid','StatsAccountsGrid','StatsCasesGrid','StatsSourcesGrid')[$tabIndex])
+            if ($list.ActualHeight -lt 300 -or $statsScroll.ViewportHeight -lt 200) {Save-LayoutImage 'Statistics-Failure'}
+            Assert-Layout ($list.ActualHeight -ge 300 -and $statsScroll.ViewportHeight -ge 200) "Statistics list or viewport collapsed: size=$size tab=$tabIndex list=$($list.ActualHeight) viewport=$($statsScroll.ViewportHeight)."
+            $point=Point-In $list $statsScroll.Content
+            Assert-Layout ($point.Y+$list.ActualHeight -le $statsScroll.ExtentHeight+1) 'Statistics list is outside the scrollable body.'
+            Assert-ButtonVisible ($statsView.FindName('StatsExportButton'))
+        }
+        Save-LayoutImage "Statistics-$($size[0])"
+    }
+    Write-Output 'PASS administrator statistics at three window sizes: readable lists and pinned export'
     Write-Output 'PASS wheel chaining, AI input, expanded downloads, selection, result lookup and administrator list layout'
 } finally {$window.Close()}

@@ -51,7 +51,8 @@ try {
     if (-not [IO.File]::Exists($taskScreenshot)) {throw '화면 이미지가 생성되지 않았습니다.'}
     $taskAdminSession=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskAdminReport))
     if ($taskAdminSession.launchMode -ne 'Admin' -or $taskAdminSession.accessMode -ne 'Admin' -or -not $taskAdminSession.adminVisible -or $taskAdminSession.loginDialogShown) {throw '관리자용 실행이 사용자 선택 없이 관리자 화면으로 진입하지 않았습니다.'}
-    if (($taskAdminSession.visibleMenus -join '|') -cne '내 심사 업무|AI 담당 업무|운영 관리' -or -not $taskAdminSession.deliveryVisible) {throw '관리자 실행의 개인·AI·운영 업무 구분이 적용되지 않았습니다.'}
+    if (($taskAdminSession.visibleMenus -join '|') -cne '내 심사 업무|AI 담당 업무|통계·현황|운영 관리' -or -not $taskAdminSession.deliveryVisible) {throw '관리자 실행의 개인·AI·운영 업무 구분이 적용되지 않았습니다.'}
+    if (-not $taskAdminSession.statisticsVisible -or -not $taskAdminSession.statisticsLandingVerified) {throw '관리자 실행의 첫 화면에 통계가 표시되지 않았습니다.'}
     if (($taskAdminSession.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가') {throw '심사 업무의 대상건 선정과 결과 평가 단계가 분리되지 않았습니다.'}
     if (-not $taskAdminSession.dropdownBindingsVerified) {throw '평가 드롭다운을 선택한 값이 실제 평가 행에 즉시 반영되지 않았습니다.'}
     if (-not $taskAdminSession.singleClickEditingVerified) {throw '문헌번호 셀을 한 번 클릭해 바로 수정할 수 없습니다.'}
@@ -79,6 +80,34 @@ try {
     if ($taskBlankRating.Count -ne 1 -or $null -ne $taskBlankRating[0].score -or $null -ne $taskBlankRating[0].cited) {throw '드롭다운의 미평가 값이 0점이나 X로 저장되었습니다.'}
     Write-Output ('PASS WPF admin mode (PowerShell {0}): direct login, user choice loads editable form, automatic user IDs, CPC, number-only results, automatic refresh, dropdown evaluation, zero/X and unevaluated values, screenshot' -f $PSVersionTable.PSVersion)
     Write-Output "Screenshot: $taskScreenshot"
+} finally {$taskProcess.Dispose()}
+
+# The administrator dashboard loads by default and filters the same snapshot
+# for on-screen drilldown and its workbook. The older month is intentionally empty.
+$taskOlderPeriod=(Get-Date).AddMonths(-1).ToString('yyyy-MM')
+$taskOlderSettings=Get-Period $taskContext $taskPeriod;$taskOlderSettings.period=$taskOlderPeriod
+[void](Save-Period $taskContext $taskOlderPeriod -Data $taskOlderSettings -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')))
+$taskStatisticsReport=Join-Path $taskOutput 'Gui.Statistics.json'
+$taskStatisticsImage=Join-Path $taskOutput 'Gui.Statistics.png'
+$taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -AdminMode -DataRoot "{1}" -SmokeTest -ExerciseStatistics -SmokeReportPath "{2}" -ScreenshotPath "{3}"' -f $taskStart,$taskRoot,$taskStatisticsReport,$taskStatisticsImage)
+$taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
+try {
+    if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw '통계 화면 검증 시간이 초과되었습니다.'}
+    if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
+    $taskStats=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskStatisticsReport))
+    if (-not $taskStats.statisticsFlowVerified -or -not $taskStats.statisticsVisible -or $taskStats.sidebarVisible) {throw '통계의 그룹·계정 이동, 월 전환 또는 전체 너비 화면 검증에 실패했습니다.'}
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $taskStatsZip=[IO.Compression.ZipFile]::OpenRead($taskStats.statisticsExportPath)
+    try {
+        $taskSheet=$taskStatsZip.GetEntry('xl/worksheets/sheet3.xml').Open()
+        $taskReader=New-Object IO.StreamReader($taskSheet)
+        try {[xml]$taskRows=$taskReader.ReadToEnd()} finally {$taskReader.Dispose()}
+        if ($taskRows.worksheet.sheetData.row.Count -ne $taskStats.statisticsExportCaseCount+1) {throw '통계 엑셀의 출원 수가 화면 필터와 다릅니다.'}
+        $taskAccountReader=New-Object IO.StreamReader($taskStatsZip.GetEntry('xl/worksheets/sheet2.xml').Open())
+        try {[xml]$taskAccountRows=$taskAccountReader.ReadToEnd()} finally {$taskAccountReader.Dispose()}
+        if ($taskAccountRows.worksheet.sheetData.row.Count -ne 2) {throw '선택한 계정 외의 계정이 통계 엑셀에 포함되었습니다.'}
+    } finally {$taskStatsZip.Dispose()}
+    Write-Output 'PASS WPF statistics: group/account drilldown, filtered workbook, empty-month reset and minimum window'
 } finally {$taskProcess.Dispose()}
 
 # Start with no submissions, persist a draft, close the app, then confirm the restored draft.

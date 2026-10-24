@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$Destination,
     [Parameter(Mandatory = $true)][ValidateNotNullOrEmpty()][string]$DataRoot,
-    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.12'
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$')][string]$Version = '0.1.13'
 )
 
 $ErrorActionPreference = 'Stop'

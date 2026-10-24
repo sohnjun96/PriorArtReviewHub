@@ -1143,4 +1143,5 @@ function Initialize-Demo {
     return Get-Context -Root $rootPath
 }
 
-Export-ModuleMember -Function Initialize-Demo,Get-Context,Get-LoginUsers,New-User,Get-Periods,Get-Users,Get-Groups,Get-Sources,Get-Period,Get-Cases,Get-TargetSelection,Save-TargetSelection,New-Submission,Cancel-Submission,Get-Deliveries,Get-DeliveryForEdit,Get-DeliveryHistory,Save-Delivery,Import-DeliveryAttachment,Resolve-DeliveryAttachment,Get-Evaluation,Save-Evaluation,Get-CaseStatus,Set-PeriodStatus,Save-MasterRecord,Save-Period
+. (Join-Path $PSScriptRoot 'Statistics.ps1')
+Export-ModuleMember -Function Initialize-Demo,Get-Context,Get-LoginUsers,New-User,Get-Periods,Get-Users,Get-Groups,Get-Sources,Get-Period,Get-Cases,Get-TargetSelection,Save-TargetSelection,New-Submission,Cancel-Submission,Get-Deliveries,Get-DeliveryForEdit,Get-DeliveryHistory,Save-Delivery,Import-DeliveryAttachment,Resolve-DeliveryAttachment,Get-Evaluation,Save-Evaluation,Get-CaseStatus,Set-PeriodStatus,Save-MasterRecord,Save-Period,Get-AdminStatistics,Select-AdminStatistics

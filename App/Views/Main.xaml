@@ -32,8 +32,8 @@
         </Grid>
       </DockPanel></ScrollViewer></Border>
       <GridSplitter x:Name="CaseSplitter" Grid.Column="1" Width="6" HorizontalAlignment="Center" Background="Transparent" ResizeBehavior="PreviousAndNext"/>
-      <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition Height="78"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <StackPanel Margin="4,0,0,8"><TextBlock x:Name="CaseTitle" Text="대상건을 등록해 시작하세요" FontSize="21" FontWeight="SemiBold" Foreground="#172B4D"/><TextBlock x:Name="CaseMetadataText" Foreground="#2257C7" FontSize="12" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="CaseSubtitle" Text="내 심사 업무: 1. 대상건 선정 → 2. AI 검색 결과 평가" Foreground="#718098" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/></StackPanel>
+      <Grid Grid.Column="2"><Grid.RowDefinitions><RowDefinition x:Name="CaseHeaderRow" Height="78"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <StackPanel x:Name="CaseHeaderPanel" Margin="4,0,0,8"><TextBlock x:Name="CaseTitle" Text="대상건을 등록해 시작하세요" FontSize="21" FontWeight="SemiBold" Foreground="#172B4D"/><TextBlock x:Name="CaseMetadataText" Foreground="#2257C7" FontSize="12" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="CaseSubtitle" Text="내 심사 업무: 1. 대상건 선정 → 2. AI 검색 결과 평가" Foreground="#718098" FontSize="12" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"/></StackPanel>
         <TabControl x:Name="MainTabs" Grid.Row="1" Background="White" BorderBrush="#DDE5F0">
           <TabItem x:Name="PersonalWorkTab" Header="내 심사 업무"><DockPanel>
             <Border DockPanel.Dock="Top" Background="#F1F5FC" Padding="16,11" Margin="12,12,12,0" CornerRadius="5"><Border.Style><Style TargetType="Border"><Style.Triggers><DataTrigger Binding="{Binding SelectedIndex, ElementName=PersonalTabs}" Value="1"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></Border.Style><TextBlock x:Name="WorkflowHintText" Text="1. 대상건 선정에서 출원을 등록한 뒤, 2. AI 검색 결과 평가에서 납품 결과를 확인하고 평가하세요." Foreground="#4B607C" TextWrapping="Wrap"/></Border>
@@ -77,6 +77,7 @@
             <StackPanel Grid.Row="3" Margin="0,12,0,0"><WrapPanel><Button x:Name="AddDocumentButton" Content="빈 행 추가"/><Button x:Name="RemoveDocumentButton" Content="선택 삭제"/></WrapPanel>
             </StackPanel>
           </Grid></ScrollViewer></DockPanel></TabItem>
+          <TabItem x:Name="StatisticsTab" Header="통계·현황"><ContentControl x:Name="StatisticsHost"/></TabItem>
           <TabItem x:Name="AdminTab" Header="운영 관리"><ContentControl x:Name="AdminContentHost"/></TabItem>
         </TabControl>
       </Grid>

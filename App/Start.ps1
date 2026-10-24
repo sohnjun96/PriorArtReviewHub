@@ -5,6 +5,7 @@
     [switch]$SmokeTest,
     [switch]$ExerciseUiWrites,
     [switch]$ExerciseWorkspaceSwitch,
+    [switch]$ExerciseStatistics,
     [ValidateSet('','Draft','Confirm')][string]$ExerciseTargetSelection='',
     [string]$ScreenshotPath,
     [string]$SmokeLoginUserId = 'U001',
@@ -13,6 +14,7 @@
 $ErrorActionPreference = 'Stop'
 if ($ExerciseUiWrites -and (-not $SmokeTest -or -not $Demo)) {throw '화면 쓰기 검증은 -Demo -SmokeTest에서만 실행할 수 있습니다.'}
 if ($ExerciseWorkspaceSwitch -and (-not $SmokeTest -or -not $Demo)) {throw '업무 전환 검증은 -Demo -SmokeTest에서만 실행할 수 있습니다.'}
+if ($ExerciseStatistics -and (-not $SmokeTest -or -not $Demo -or -not $AdminMode)) {throw '통계 검증은 -Demo -SmokeTest -AdminMode에서만 실행할 수 있습니다.'}
 if ($ExerciseTargetSelection -and (-not $SmokeTest -or -not $Demo)) {throw '대상건 검증은 -Demo -SmokeTest에서만 실행할 수 있습니다.'}
 if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') { throw 'PowerShell을 -STA 옵션으로 실행하세요.' }
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
@@ -87,6 +89,7 @@ $window.Height=[Math]::Min($window.Height,[Math]::Max($window.MinHeight,$desktop
 $script:ui = @{}
 $names = @('IdentityText','PeriodCombo','RefreshButton','ScopeCombo','SearchBox','CaseCountText','ExportButton','ZipButton','CasesGrid','CaseTitle','CaseSubtitle','MainTabs','SubmissionBox','SubmitButton','CancelSubmissionButton','SubmissionResult','DeliverySummaryText','PublishedGrid','DeliveryTab','SourceCombo','LoadDeliveryButton','DeliveryStateText','DocumentsGrid','AddDocumentButton','RemoveDocumentButton','DraftButton','PublishButton','EvaluationStateText','RankGrid','RatingsGrid','SaveEvaluationButton','EvaluationSavedText','AdminTab','AdminContentHost','ModeText','StatusText')
 $names += 'CaseExportButton'
+$names += @('StatisticsTab','StatisticsHost','CaseHeaderRow','CaseHeaderPanel')
 $names += @('EvaluationScroll','PublishedScroll','DeliveryScroll')
 $names += @('CaseSidebar','CaseSidebarColumn','CaseGapColumn','CaseSplitter','SelectionDraftButton','SelectionHelpText')
 $names += @('CaseMetadataText','ApplicationNumberBox','CpcBox','AddSubmissionRowButton','AddPastedRowsButton','RemoveSubmissionRowButton','SubmissionRowsGrid','SwitchUserButton','PersonalWorkTab','PersonalTabs','TargetSelectionTab','EvaluationTab','EvaluationTabs','ResultNumbersBox','AddResultNumbersButton','CaseStateCombo','CasesEmptyText','GoEvaluationButton','DocumentCountText','CaseListTitleText','CaseListHintText','WorkflowHintText')
@@ -312,6 +315,7 @@ function Set-Identity {
     $ui.IdentityText.Text=(@($modeLabel,$context.User.name,($affiliation -join ' / ')) | Where-Object {$_}) -join ' · '
 }
 function Get-CurrentWorkspace {
+    if ($ui.MainTabs.SelectedItem -eq $ui.StatisticsTab) {return 'Statistics'}
     if ($ui.MainTabs.SelectedItem -eq $ui.DeliveryTab) {return 'AI'}
     if ($ui.MainTabs.SelectedItem -eq $ui.AdminTab) {return 'Admin'}
     return 'Personal'
@@ -327,7 +331,10 @@ function Set-WorkspacePresentation {
     $previous=$script:changing;$script:changing=$true
     $ui.ScopeCombo.ItemsSource=@([pscustomobject]@{id=$scope;name=$name});$ui.ScopeCombo.SelectedIndex=0;$ui.ScopeCombo.IsEnabled=$false
     $script:changing=$previous
-    $selectionOnly=-not $AdminMode -and $script:activeWorkspace -eq 'Personal' -and (-not $script:targetSelection -or $script:targetSelection.status -ne 'Confirmed')
+    $statistics=$script:activeWorkspace -eq 'Statistics'
+    $ui.CaseHeaderPanel.Visibility=if ($statistics) {'Collapsed'} else {'Visible'}
+    $ui.CaseHeaderRow.Height=if ($statistics) {0} else {78}
+    $selectionOnly=$statistics -or (-not $AdminMode -and $script:activeWorkspace -eq 'Personal' -and (-not $script:targetSelection -or $script:targetSelection.status -ne 'Confirmed'))
     $ui.CaseSidebar.Visibility=if ($selectionOnly) {'Collapsed'} else {'Visible'}
     $ui.CaseSplitter.Visibility=$ui.CaseSidebar.Visibility
     $ui.CaseSidebarColumn.MinWidth=if ($selectionOnly) {0} else {290}
@@ -378,8 +385,8 @@ function Change-Workspace {
     Set-WorkspacePresentation
     Load-Cases -SelectCaseId $script:workspaceCases[$next]
 }
-function Select-Workspace([ValidateSet('Selection','Evaluation','AI','Admin')][string]$Name) {
-    $tab=switch ($Name) {'Selection' {$ui.PersonalWorkTab};'Evaluation' {$ui.PersonalWorkTab};'AI' {$ui.DeliveryTab};'Admin' {$ui.AdminTab}}
+function Select-Workspace([ValidateSet('Selection','Evaluation','AI','Admin','Statistics')][string]$Name) {
+    $tab=switch ($Name) {'Selection' {$ui.PersonalWorkTab};'Evaluation' {$ui.PersonalWorkTab};'AI' {$ui.DeliveryTab};'Admin' {$ui.AdminTab};'Statistics' {$ui.StatisticsTab}}
     if ($tab.Visibility -ne 'Visible') {throw '현재 역할에서 사용할 수 없는 업무입니다.'}
     if ($Name -in @('Selection','Evaluation')) {
         $step=if ($Name -eq 'Selection') {$ui.TargetSelectionTab} else {$ui.EvaluationTab}
@@ -443,6 +450,7 @@ function Clear-Detail {
     Update-ActionAvailability
 }
 function Load-Cases([string]$SelectCaseId='') {
+    if ($script:activeWorkspace -eq 'Statistics') {Load-Statistics;return}
     if (-not $SelectCaseId -and $script:selectedCase) {$SelectCaseId=$script:selectedCase.caseId}
     $script:refreshCaseId=$SelectCaseId
     $period = Get-SelectedPeriod
@@ -712,8 +720,11 @@ function Export-Current([bool]$IncludeAttachments,[string]$CaseId='') {
 
 . (Join-Path $appDirectory 'Ui\Admin.ps1')
 Initialize-AdminUi
+. (Join-Path $appDirectory 'Ui/Statistics.ps1')
+Initialize-StatisticsUi
 . (Join-Path $appDirectory 'Ui/Layout.ps1')
 foreach ($list in @($ui.CasesGrid,$ui.SubmissionRowsGrid,$ui.PublishedGrid,$ui.RankGrid,$ui.RatingsGrid,$ui.DocumentsGrid,$ui.PeriodMembersGrid,$ui.PeriodAssignmentsGrid,$ui.PeriodSourcesList)) {Enable-ReadableListScroll $list}
+foreach ($list in @($ui.StatsGroupsGrid,$ui.StatsAccountsGrid,$ui.StatsCasesGrid,$ui.StatsSourcesGrid)) {Enable-ReadableListScroll $list}
 
 function Set-SessionControls {
     $script:changing=$true
@@ -722,6 +733,8 @@ function Set-SessionControls {
     $ui.ModeText.Text=if ($Demo) {"로컬 시연 · $modeLabel"} else {"$modeLabel · $DataRoot"}
     $ui.SwitchUserButton.Visibility=if ($AdminMode) {'Collapsed'} else {'Visible'}
     $ui.AdminTab.Visibility=if ('Admin' -in $context.User.roles) {'Visible'} else {'Collapsed'}
+    $ui.StatisticsTab.Visibility=$ui.AdminTab.Visibility
+    Clear-Statistics
     $ui.PersonalWorkTab.Visibility=if ('examiner' -in $context.User.roles) {'Visible'} else {'Collapsed'}
     $ui.DeliveryTab.Visibility=if ('ai' -in $context.User.roles -or 'admin' -in $context.User.roles) {'Visible'} else {'Collapsed'}
     $script:workspaceCases=@{Personal='';AI='';Admin=''};$script:workspaceFilters=@{}
@@ -730,7 +743,7 @@ function Set-SessionControls {
     $ui.PeriodCombo.ItemsSource=@(Get-Periods -Context $context);$ui.PeriodCombo.SelectedIndex=0
     Reset-AdminEditor
     $ui.PersonalTabs.SelectedItem=$ui.TargetSelectionTab;$ui.EvaluationTabs.SelectedIndex=1
-    $ui.MainTabs.SelectedItem=if ($AdminMode) {$ui.AdminTab} elseif ('examiner' -in $context.User.roles) {$ui.PersonalWorkTab} else {$ui.DeliveryTab}
+    $ui.MainTabs.SelectedItem=if ($AdminMode) {$ui.StatisticsTab} elseif ('examiner' -in $context.User.roles) {$ui.PersonalWorkTab} else {$ui.DeliveryTab}
     $script:activeWorkspace=Get-CurrentWorkspace;$script:lastMainTab=$ui.MainTabs.SelectedItem
     Set-SelectionStage
     $script:requests=@{};$script:adminDirty=$false;$script:changing=$false
@@ -870,6 +883,60 @@ if ($SmokeTest) {
     $script:smokeSelected=$false;$script:smokeStage=0;$script:selectionStepPreserved=$false
     $script:smokeTimer.Add_Tick({
         if ($script:busy) {return}
+        if ($ExerciseStatistics -and -not $script:smokeFailure -and $script:smokeStage -lt 6) {
+            Invoke-UiAction {
+                switch ($script:smokeStage) {
+                    0 {
+                        if (-not $script:statisticsSnapshot -or $script:activeWorkspace -ne 'Statistics' -or $ui.CaseSidebar.Visibility -ne 'Collapsed' -or $ui.StatsCasesGrid.Items.Count -lt 1) {throw '통계 첫 화면의 출원 집계 또는 전체 너비 배치가 올바르지 않습니다.'}
+                        $script:statsOriginalPeriod=Get-SelectedPeriod
+                        Save-TestScreenshot '-Overview'
+                        $ui.StatsGroupsGrid.SelectedItem=@($ui.StatsGroupsGrid.Items | Where-Object {$_.caseCount -gt 0}) | Select-Object -First 1
+                    }
+                    1 {
+                        if (-not $ui.StatsGroupCombo.SelectedValue -or $ui.StatsDetailTabs.SelectedIndex -ne 1) {throw '그룹 클릭 후 계정별 현황으로 이동하지 않았습니다.'}
+                        $ui.StatsAccountsGrid.SelectedItem=@($ui.StatsAccountsGrid.Items | Where-Object {$_.caseCount -gt 0}) | Select-Object -First 1
+                        if (-not $ui.StatsUserCombo.SelectedValue -or $ui.StatsDetailTabs.SelectedIndex -ne 2 -or $script:statisticsFilter.summary.accountCount -ne 1 -or $ui.StatsAccountsGrid.Items.Count -ne 1 -or @($ui.StatsCasesGrid.Items | Where-Object {$_.userId -ne $ui.StatsUserCombo.SelectedValue}).Count) {throw '계정 클릭 후 다른 계정의 출원이나 집계가 남았습니다.'}
+                        Save-TestScreenshot '-Account'
+                        Export-StatisticsView -OutputDirectory ([IO.Path]::GetDirectoryName($SmokeReportPath))
+                    }
+                    2 {
+                        if (-not [IO.File]::Exists($script:statisticsExportPath)) {throw '조회 범위의 통계 엑셀이 생성되지 않았습니다.'}
+                        $script:statsExportCaseCount=$script:statisticsFilter.cases.Count
+                        $ui.StatsDetailTabs.SelectedIndex=3;Save-TestScreenshot '-Sources'
+                        $empty=@($ui.PeriodCombo.Items | Where-Object {$_.period -ne $script:statsOriginalPeriod}) | Select-Object -First 1
+                        if (-not $empty) {throw '빈 운영월 검증 자료가 없습니다.'}
+                        $ui.PeriodCombo.SelectedItem=$empty
+                    }
+                    3 {
+                        if ($script:statisticsFilter.summary.caseCount -ne 0 -or $ui.StatsCasesGrid.Items.Count -ne 0 -or $ui.StatsCasesText.Text -ne '0') {throw '빈 운영월에 이전 월의 통계가 남았습니다.'}
+                        $ui.StatsResetButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        if ($ui.StatsGroupCombo.SelectedValue -or $ui.StatsUserCombo.SelectedValue) {throw '전체 보기에서 필터가 초기화되지 않았습니다.'}
+                        Save-TestScreenshot '-Empty'
+                        $ui.PeriodCombo.SelectedItem=@($ui.PeriodCombo.Items | Where-Object {$_.period -eq $script:statsOriginalPeriod}) | Select-Object -First 1
+                    }
+                    4 {
+                        if ($script:statisticsFilter.summary.caseCount -lt 1 -or $script:statisticsSnapshot.period -ne $script:statsOriginalPeriod) {throw '운영월 복귀 후 통계가 갱신되지 않았습니다.'}
+                        $window.Width=$window.MinWidth;$window.Height=$window.MinHeight
+                        $ui.StatsScroll.ScrollToBottom();$window.UpdateLayout();Save-TestScreenshot '-Minimum'
+                    }
+                    5 {
+                        $ui.StatsScroll.ScrollToTop();$window.UpdateLayout()
+                        $script:statisticsFlowVerified=$true
+                    }
+                }
+                $script:smokeStage++
+            }
+            return
+        }
+        if ($ExerciseUiWrites -and -not $script:smokeSelected -and $script:activeWorkspace -eq 'Statistics' -and -not $script:smokeFailure) {
+            Invoke-UiAction {
+                if (-not $script:statisticsSnapshot -or $ui.CaseSidebar.Visibility -ne 'Collapsed') {throw '관리자 첫 화면에 전체 통계가 표시되지 않았습니다.'}
+                $script:statisticsLandingVerified=$true
+                Save-TestScreenshot '-Statistics'
+                Select-Workspace 'Admin'
+            }
+            return
+        }
         if ($ExerciseTargetSelection -and -not $script:smokeFailure -and $script:smokeStage -lt 3) {
             Invoke-UiAction {
                 switch ($script:smokeStage) {
@@ -1108,6 +1175,8 @@ if ($SmokeTest) {
                 adminFormDisplayVerified=[bool]$script:adminFormDisplayVerified
                 caseScrollVerified=[bool]$script:caseScrollVerified
                 separateUserFlowsVerified=[bool]$script:separateUserFlowsVerified
+                statisticsVisible=($ui.StatisticsTab.Visibility -eq 'Visible');statisticsLandingVerified=[bool]$script:statisticsLandingVerified
+                statisticsFlowVerified=[bool]$script:statisticsFlowVerified;statisticsExportPath=$script:statisticsExportPath;statisticsExportCaseCount=$script:statsExportCaseCount
             }
             [IO.File]::WriteAllText($SmokeReportPath,(ConvertTo-Json -InputObject $report -Depth 10),(New-Object Text.UTF8Encoding($false)))
         }

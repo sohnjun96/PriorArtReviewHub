@@ -22,6 +22,7 @@ function Read-TestView([string]$Name) {
 function Find-TestControl([string]$Name) {
     $control = $window.FindName($Name)
     if ($null -eq $control) { $control = $adminView.FindName($Name) }
+    if ($null -eq $control) { $control = $statisticsView.FindName($Name) }
     return $control
 }
 function Get-TestDescendants($Root) {
@@ -90,6 +91,10 @@ try {
     . (Join-Path $appPath 'Ui/Admin.ps1')
     Initialize-AdminUi
     $adminView = $script:adminView
+    $script:ui.StatisticsHost=$window.FindName('StatisticsHost')
+    . (Join-Path $appPath 'Ui/Statistics.ps1')
+    Initialize-StatisticsUi
+    $statisticsView=$script:statisticsView
     $controlReferences = @([regex]::Matches($source, '\$ui\.([A-Za-z][A-Za-z0-9_]*)') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
     foreach ($name in $controlReferences) {
         if ($null -eq (Find-TestControl $name)) { throw "GUI scripts refer to missing XAML control '$name'." }
@@ -106,9 +111,9 @@ try {
         if ($grid.CanUserAddRows -or $grid.CanUserDeleteRows -or $grid.AutoGenerateColumns) { throw "Grid '$gridName' permits uncontrolled row/column creation." }
     }
     $headers = @($window.FindName('MainTabs').Items | ForEach-Object { $_.Header })
-    if (($headers -join '|') -cne '내 심사 업무|AI 담당 업무|운영 관리') { throw 'Examiner work, assigned AI work and administrator work must have separate workspaces.' }
+    if (($headers -join '|') -cne '내 심사 업무|AI 담당 업무|통계·현황|운영 관리') { throw 'Examiner work, assigned AI work and administrator work must have separate workspaces.' }
     $mainNames = @($window.FindName('MainTabs').Items | ForEach-Object { $_.Name })
-    if (($mainNames -join '|') -cne 'PersonalWorkTab|DeliveryTab|AdminTab') { throw 'The role workspaces must remain independent top-level tabs.' }
+    if (($mainNames -join '|') -cne 'PersonalWorkTab|DeliveryTab|StatisticsTab|AdminTab') { throw 'The role workspaces must remain independent top-level tabs.' }
     $personalTabs = $window.FindName('PersonalTabs')
     if ($null -eq $personalTabs -or (($personalTabs.Items | ForEach-Object { $_.Header }) -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가') { throw 'Target selection and result evaluation must be separate examiner steps.' }
     if ((($personalTabs.Items | ForEach-Object { $_.Name }) -join '|') -cne 'TargetSelectionTab|EvaluationTab') { throw 'The personal workspace must expose separate selection and evaluation tabs.' }

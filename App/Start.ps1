@@ -6,7 +6,7 @@
     [switch]$ExerciseUiWrites,
     [switch]$ExerciseWorkspaceSwitch,
     [switch]$ExerciseStatistics,
-    [ValidateSet('','Selection','Evaluation','AI','Statistics')][string]$SmokeWorkspace='',
+    [ValidateSet('','Selection','Evaluation','AI','Admin','Statistics')][string]$SmokeWorkspace='',
     [ValidateSet('','Draft','Confirm')][string]$ExerciseTargetSelection='',
     [string]$ScreenshotPath,
     [string]$SmokeLoginUserId = 'U001',
@@ -153,7 +153,7 @@ function Show-Error($Problem) {
     $message = [string]$Problem
     if ($Problem.Exception) { $message = $Problem.Exception.Message }
     Set-Status "처리하지 못했습니다. 입력내용은 유지됩니다. $message"
-    if ($SmokeTest) {$script:smokeFailure=$message;return}
+    if ($SmokeTest) {$script:smokeFailure=$message+"`n"+$Problem.ScriptStackTrace;return}
     [Windows.MessageBox]::Show($window,$message,'처리 확인','OK','Warning') | Out-Null
 }
 function Invoke-UiAction([scriptblock]$Action) { try { & $Action } catch { Show-Error $_ } }
@@ -333,7 +333,7 @@ function Set-WorkspacePresentation {
     $previous=$script:changing;$script:changing=$true
     $ui.ScopeCombo.ItemsSource=@([pscustomobject]@{id=$scope;name=$name});$ui.ScopeCombo.SelectedIndex=0;$ui.ScopeCombo.IsEnabled=$false
     $script:changing=$previous
-    $statistics=$script:activeWorkspace -eq 'Statistics'
+    $statistics=$script:activeWorkspace -in @('Statistics','Admin')
     $ui.CaseHeaderPanel.Visibility=if ($statistics) {'Collapsed'} else {'Visible'}
     $ui.CaseHeaderRow.Height=if ($statistics) {0} else {78}
     $selectionOnly=$statistics -or (-not $AdminMode -and $script:activeWorkspace -eq 'Personal' -and (-not $script:targetSelection -or $script:targetSelection.status -ne 'Confirmed'))
@@ -454,6 +454,7 @@ function Clear-Detail {
 }
 function Load-Cases([string]$SelectCaseId='') {
     if ($script:activeWorkspace -eq 'Statistics') {Load-Statistics;return}
+    if ($script:activeWorkspace -eq 'Admin') {Load-AdminWorkspace;return}
     if (-not $SelectCaseId -and $script:selectedCase) {$SelectCaseId=$script:selectedCase.caseId}
     $script:refreshCaseId=$SelectCaseId
     $period = Get-SelectedPeriod
@@ -728,6 +729,7 @@ Initialize-StatisticsUi
 . (Join-Path $appDirectory 'Ui/Layout.ps1')
 foreach ($list in @($ui.CasesGrid,$ui.SubmissionRowsGrid,$ui.PublishedGrid,$ui.RankGrid,$ui.RatingsGrid,$ui.DocumentsGrid,$ui.PeriodMembersGrid,$ui.PeriodAssignmentsGrid,$ui.PeriodSourcesList)) {Enable-ReadableListScroll $list}
 foreach ($list in @($ui.StatsGroupsGrid,$ui.StatsAccountsGrid,$ui.StatsCasesGrid,$ui.StatsSourcesGrid)) {Enable-ReadableListScroll $list}
+foreach ($list in @($ui.AdminUsersGrid,$ui.AdminGroupsGrid,$ui.GroupMembersGrid)) {Enable-ReadableListScroll $list}
 
 function Set-SessionControls {
     $script:changing=$true
@@ -941,7 +943,7 @@ if ($SmokeTest) {
                 if (-not $script:statisticsSnapshot -or $ui.CaseSidebar.Visibility -ne 'Collapsed') {throw '관리자 첫 화면에 전체 통계가 표시되지 않았습니다.'}
                 $script:statisticsLandingVerified=$true
                 Save-TestScreenshot '-Statistics'
-                Select-Workspace 'Admin'
+                Select-Workspace 'Selection'
             }
             return
         }
@@ -990,7 +992,7 @@ if ($SmokeTest) {
             $script:selectionStepPreserved=$script:activeWorkspace -eq 'Personal' -and $ui.PersonalTabs.SelectedItem -eq $ui.TargetSelectionTab
             return
         }
-        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 24) {
+        if ($ExerciseUiWrites -and $script:smokeSelected -and -not $script:smokeFailure -and $script:smokeStage -lt 29) {
             Invoke-UiAction {
                 switch ($script:smokeStage) {
                     0 {$script:smokeOriginalCaseId=$script:selectedCase.caseId;Select-Workspace 'Admin'}
@@ -998,7 +1000,7 @@ if ($SmokeTest) {
                         $ui.AdminKindCombo.SelectedIndex=0
                         $script:smokeUserCount=$script:adminOptions.Users.Count
                         $ui.AdminUserTabs.SelectedIndex=1
-                        if ($ui.AdminUserSelectionPanel.Visibility -ne 'Collapsed' -or $ui.AdminSaveButton.Content -ne '사용자 등록' -or $ui.UserNameBox.Text -or $script:adminLoadedId) {throw '신규 등록 화면에 기존 사용자 선택이나 정보가 남습니다.'}
+                        if ($ui.CaseSidebar.Visibility -ne 'Collapsed' -or $script:selectedCase -or $ui.AdminRosterPanel.Visibility -ne 'Collapsed' -or $ui.AdminSaveButton.Content -ne '신규 사용자 등록' -or $ui.UserNameBox.Text -or $script:adminLoadedId) {throw '신규 등록 화면에 출원 목록·사용자 명단이나 기존 정보가 남습니다.'}
                     }
                     2 {
                         $ui.UserNameBox.Text='화면 등록 심사관';$ui.UserBureauBox.Text='화면 등록 심사국';$ui.UserDivisionBox.Text='화면 등록 심사과'
@@ -1006,13 +1008,14 @@ if ($SmokeTest) {
                         $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
                     }
                     3 {
-                        if ($ui.AdminUserTabs.SelectedIndex -ne 1 -or $ui.UserNameBox.Text -or $script:adminLoadedId -or $ui.AdminUserCombo.SelectedItem -or $script:adminDirty -or $ui.AdminSavedText.Text -notlike '*등록 완료') {throw '사용자 등록 후 신규 양식과 완료 안내가 표시되지 않았습니다.'}
+                        if ($ui.AdminUserTabs.SelectedIndex -ne 1 -or $ui.UserNameBox.Text -or $script:adminLoadedId -or $ui.AdminUsersGrid.SelectedItem -or $script:adminDirty -or $ui.AdminSavedText.Text -notlike '*등록 완료') {throw '사용자 등록 후 신규 양식과 완료 안내가 표시되지 않았습니다.'}
                         $script:smokeRegisteredUserId=$script:adminLastUserId
                         $newUserId=$script:smokeRegisteredUserId
-                        $ui.AdminUserTabs.SelectedIndex=0
+                        if ($ui.ViewRegisteredUserButton.Visibility -ne 'Visible') {throw '등록한 사용자 보기 버튼이 표시되지 않습니다.'}
+                        $ui.ViewRegisteredUserButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
                         if ($script:adminLoadedId -ne $newUserId -or $ui.AdminUserSelectionPanel.Visibility -ne 'Visible' -or $ui.AdminSaveButton.Content -ne '변경사항 저장') {throw '기존 사용자 관리 탭에서 방금 등록한 사용자를 조회하지 못했습니다.'}
-                        $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq 'U002'}) | Select-Object -First 1
-                        $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq $newUserId}) | Select-Object -First 1
+                        $ui.AdminUsersGrid.SelectedItem=@($ui.AdminUsersGrid.ItemsSource | Where-Object {$_.userId -eq 'U002'}) | Select-Object -First 1
+                        $ui.AdminUsersGrid.SelectedItem=@($ui.AdminUsersGrid.ItemsSource | Where-Object {$_.userId -eq $newUserId}) | Select-Object -First 1
                         $script:automaticUserLoadVerified=$ui.UserNameBox.Text -eq '화면 등록 심사관' -and $ui.UserDivisionBox.Text -eq '화면 등록 심사과'
                         if (-not $script:automaticUserLoadVerified) {throw '사용자 선택 즉시 폼이 표시되지 않았습니다.'}
                         Select-Workspace 'Selection'
@@ -1099,7 +1102,7 @@ if ($SmokeTest) {
                     20 {Select-Workspace 'Admin'}
                     21 {
                         $ui.AdminKindCombo.SelectedIndex=0;$ui.AdminUserTabs.SelectedIndex=0
-                        $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq $script:smokeRegisteredUserId}) | Select-Object -First 1
+                        $ui.AdminUsersGrid.SelectedItem=@($ui.AdminUsersGrid.ItemsSource | Where-Object {$_.userId -eq $script:smokeRegisteredUserId}) | Select-Object -First 1
                         $ui.UserBureauBox.Text='수정한 심사국';$ui.UserAiCheck.IsChecked=$true;$ui.UserActiveCheck.IsChecked=$false
                         $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
                     }
@@ -1115,9 +1118,51 @@ if ($SmokeTest) {
                         if ($script:adminOptions.Users.Count -ne $script:smokeUserCount+2 -or $script:adminLastUserId -eq $script:smokeRegisteredUserId -or $ui.UserNameBox.Text -or $script:adminDirty) {throw '연속 등록이 별개의 사용자로 저장되지 않았습니다.'}
                         Save-TestScreenshot '-Users-Registered'
                         $ui.AdminUserTabs.SelectedIndex=0
-                        $ui.AdminUserCombo.SelectedItem=@($ui.AdminUserCombo.ItemsSource | Where-Object {$_.userId -eq $script:smokeRegisteredUserId}) | Select-Object -First 1
-                        if ($ui.UserBureauBox.Text -ne '수정한 심사국' -or $ui.UserActiveCheck.IsChecked -or -not $ui.UserAiCheck.IsChecked -or $ui.AdminUserCombo.SelectedItem.displayName -notlike '*(비활성)') {throw '비활성 사용자의 변경사항을 다시 불러오지 못했습니다.'}
+                        $ui.AdminUsersGrid.SelectedItem=@($ui.AdminUsersGrid.ItemsSource | Where-Object {$_.userId -eq $script:smokeRegisteredUserId}) | Select-Object -First 1
+                        if ($ui.UserBureauBox.Text -ne '수정한 심사국' -or $ui.UserActiveCheck.IsChecked -or -not $ui.UserAiCheck.IsChecked -or $ui.AdminUsersGrid.SelectedItem.displayName -notlike '*(비활성)') {throw '비활성 사용자의 변경사항을 다시 불러오지 못했습니다.'}
                         $script:separateUserFlowsVerified=$true
+                    }
+                    24 {
+                        $ui.AdminUserSearchBox.Text='화면 등록 심사관'
+                        $ui.AdminBureauFilter.SelectedItem=@($ui.AdminBureauFilter.ItemsSource | Where-Object {$_.value -eq '수정한 심사국'}) | Select-Object -First 1
+                        $ui.AdminDivisionFilter.SelectedItem=@($ui.AdminDivisionFilter.ItemsSource | Where-Object {$_.value -eq '화면 등록 심사과'}) | Select-Object -First 1
+                        if ($ui.AdminUsersGrid.Items.Count -ne 1 -or $script:adminLoadedId -ne $script:smokeRegisteredUserId -or $ui.AdminUsersGrid.SelectedItem.activeLabel -ne '비활성' -or $ui.UserFormTitle.Text -notlike '*화면 등록 심사관*') {throw '사용자 검색·소속 필터·비활성 표시 또는 상세 연결 실패'}
+                    }
+                    25 {
+                        if ($ui.AdminBureauFilter.SelectedItem.value -ne '수정한 심사국' -or $ui.AdminDivisionFilter.SelectedItem.value -ne '화면 등록 심사과') {throw '선택한 심사국·심사과 필터가 유지되지 않습니다.'}
+                        Save-TestScreenshot '-Roster-Filtered'
+                        $ui.AdminUserSearchBox.Clear()
+                        if ($ui.AdminUsersGrid.Items.Count -ne 1 -or $script:adminLoadedId -ne $script:smokeRegisteredUserId) {throw '이름 검색 없이 소속 필터만으로 명단이 좁혀지지 않습니다.'}
+                        $ui.AdminUserSearchBox.Text='no-matching-user-12345'
+                        if ($ui.AdminUsersGrid.Items.Count -ne 0 -or $ui.AdminSaveButton.IsEnabled -or $ui.UserFieldsPanel.IsEnabled -or $ui.UserNameBox.Text) {throw '검색 결과가 없는데 이전 사용자 정보를 수정할 수 있습니다.'}
+                        $ui.AdminFilterResetButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        if ($ui.AdminUsersGrid.Items.Count -ne $script:smokeUserCount+2) {throw '전체 명단 복원 실패'}
+                        $ui.AdminUserTabs.SelectedIndex=1
+                        $ui.ViewRegisteredUserButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        if ($script:adminLoadedId -ne $script:adminLastRegisteredId -or $ui.UserNameBox.Text -ne '연속 등록 심사관') {throw '등록한 사용자 보기가 마지막 등록 계정을 선택하지 못합니다.'}
+                        $ui.AdminKindCombo.SelectedIndex=1
+                        $ui.AdminGroupsGrid.SelectedValue='G01'
+                        if ($ui.GroupMembersGrid.Items.Count -ne 3 -or $ui.GroupMembersTitle.Text -notlike ((Get-SelectedPeriod)+'*') -or $ui.AdminRosterPanel.Visibility -ne 'Visible') {throw '그룹 클릭 후 선택한 운영월의 참여 명단이 표시되지 않습니다.'}
+                    }
+                    26 {
+                        # Allow WPF's deferred column measurement to finish before capturing a newly visible grid.
+                        if ($ui.AdminGroupsGrid.Columns[0].ActualWidth -lt 300 -or $ui.GroupMembersGrid.Columns[1].ActualWidth -lt 100) {throw '그룹 또는 참여 명단의 열 너비가 좁아 내용을 읽을 수 없습니다.'}
+                        Save-TestScreenshot '-Group-Members'
+                        $ui.NewUserButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                        if ($ui.GroupMembersGrid.Items.Count -ne 0 -or $ui.GroupNameBox.Text) {throw '신규 그룹에 이전 그룹 정보가 남습니다.'}
+                        $ui.GroupNameBox.Text='화면 등록 그룹'
+                        $ui.AdminSaveButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    27 {
+                        $script:smokeRegisteredGroupId=$script:adminLoadedId
+                        if ($ui.GroupMembersGrid.Items.Count -ne 0 -or $ui.AdminGroupsGrid.SelectedItem.name -ne '화면 등록 그룹') {throw '신규 그룹 저장·선택 연결 실패'}
+                        $ui.AdminGroupsGrid.SelectedValue='G01'
+                        if ($ui.GroupMembersGrid.Items.Count -ne 3 -or $ui.GroupNameBox.Text -eq '화면 등록 그룹' -or @($ui.GroupMembersGrid.Items | Where-Object {$_.assignments -ne '—'}).Count -ne 2) {throw '그룹 전환 후 참여자 또는 담당 AI가 갱신되지 않습니다.'}
+                        $ui.EditGroupPeriodButton.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent)))
+                    }
+                    28 {
+                        if ((Get-AdminKind) -ne 'Period' -or $script:adminLoadedId -ne (Get-SelectedPeriod) -or $ui.AdminRosterPanel.Visibility -ne 'Collapsed' -or $ui.PeriodMembersGrid.Items.Count -ne 3) {throw '그룹에서 월 운영의 배정 수정 화면으로 이동하지 못합니다.'}
+                        $script:adminRosterFlowVerified=$true
                         Select-Workspace 'Evaluation'
                     }
                 }
@@ -1188,6 +1233,7 @@ if ($SmokeTest) {
                 adminFormDisplayVerified=[bool]$script:adminFormDisplayVerified
                 caseScrollVerified=[bool]$script:caseScrollVerified
                 separateUserFlowsVerified=[bool]$script:separateUserFlowsVerified
+                adminRosterFlowVerified=[bool]$script:adminRosterFlowVerified
                 statisticsVisible=($ui.StatisticsTab.Visibility -eq 'Visible');statisticsLandingVerified=[bool]$script:statisticsLandingVerified
                 statisticsFlowVerified=[bool]$script:statisticsFlowVerified;statisticsExportPath=$script:statisticsExportPath;statisticsExportCaseCount=$script:statsExportCaseCount
             }

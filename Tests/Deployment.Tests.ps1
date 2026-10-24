@@ -70,7 +70,7 @@ try {
     }
     Test-DeploymentCase 'Release contains exact modules, XAML and version-specific launchers' {
         $release = & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $deploymentPath -DataRoot $storePath
-        Assert-Deployment ($release.version -eq '0.1.14') 'default release version'
+        Assert-Deployment ($release.version -eq '0.1.15') 'default release version'
         foreach ($relative in @('Start.ps1', 'Modules/Storage.psm1', 'Modules/Workflow.psm1', 'Modules/Export.psm1', 'Views/Main.xaml', 'Views/Login.xaml', 'Ui/Admin.ps1', 'Ui/Layout.ps1', 'Views/Admin.xaml')) {
             $sourceFile = Join-Path (Join-Path $projectPath 'App') $relative
             $copiedFile = Join-Path $release.release $relative
@@ -78,7 +78,7 @@ try {
             Assert-Deployment ((Get-FileHash -LiteralPath $sourceFile -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $copiedFile -Algorithm SHA256).Hash) "identical copy $relative"
         }
         $launchText = [IO.File]::ReadAllText((Join-Path $deploymentPath 'Launch.ps1'))
-        Assert-Deployment ($launchText.Contains('App\releases\0.1.14\Start.ps1')) 'launcher pins exact release'
+        Assert-Deployment ($launchText.Contains('App\releases\0.1.15\Start.ps1')) 'launcher pins exact release'
         Assert-Deployment ($launchText.Contains($storePath.Replace("'", "''"))) 'launcher pins production data root'
         Assert-Deployment ($launchText.Contains('param([switch]$AdminMode)') -and $launchText.Contains('-AdminMode:$AdminMode')) 'shared PowerShell launcher forwards its switch'
         Assert-Deployment ($release.launcher -ceq (Join-Path $deploymentPath '실행.cmd') -and $release.adminLauncher -ceq (Join-Path $deploymentPath '관리자용.cmd') -and $release.userLauncher -ceq (Join-Path $deploymentPath '일반사용자용.cmd')) 'launcher metadata includes legacy, administrator and user paths'
@@ -110,7 +110,7 @@ try {
     }
     Test-DeploymentCase 'Shared launcher forwards mode and the identical store at runtime' {
         $probeRoot = Join-Path $testRoot 'LauncherProbe'
-        $probeRelease = Join-Path $probeRoot 'App/releases/0.1.14'
+        $probeRelease = Join-Path $probeRoot 'App/releases/0.1.15'
         [void][IO.Directory]::CreateDirectory($probeRelease)
         [IO.File]::Copy((Join-Path $deploymentPath 'Launch.ps1'), (Join-Path $probeRoot 'Launch.ps1'))
         $probeScript = 'param([switch]$AdminMode,[string]$DataRoot)' + "`r`n" + '[pscustomobject]@{ adminMode=[bool]$AdminMode; dataRoot=$DataRoot } | ConvertTo-Json -Compress' + "`r`n"
@@ -152,7 +152,7 @@ try {
             [IO.File]::WriteAllText($existingEntry, 'keep-existing-launcher')
             Assert-DeploymentThrows { & (Join-Path $projectPath 'Tools/Publish-Release.ps1') -Destination $reservedTarget -DataRoot $storePath } '덮어쓰지 않습니다'
             Assert-Deployment ([IO.File]::ReadAllText($existingEntry) -ceq 'keep-existing-launcher') "preserved reserved launcher $entryName"
-            Assert-Deployment (-not (Test-Path -LiteralPath (Join-Path $reservedTarget 'App/releases/0.1.14'))) 'release is not written when a reserved launcher exists'
+            Assert-Deployment (-not (Test-Path -LiteralPath (Join-Path $reservedTarget 'App/releases/0.1.15'))) 'release is not written when a reserved launcher exists'
         }
     }
     Write-Host ('Deployment tests: {0} passed (PowerShell {1}).' -f $script:passed, $PSVersionTable.PSVersion)

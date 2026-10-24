@@ -224,7 +224,7 @@ try {
         $caseXml = Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml'
         Assert-ExportTest ($caseXml.Contains('다른 심사관 중복 제출') -and $caseXml.Contains('확인 필요')) 'Cross-examiner duplicate submission warning is included.'
         $ratingXml = Read-ExportZipEntry $zip 'xl/worksheets/sheet4.xml'
-        Assert-ExportTest ($ratingXml.Contains('현재 납품에 없는 문헌') -and $ratingXml.Contains('필요')) 'Stale and removed-document evaluations remain visible.'
+        Assert-ExportTest ($ratingXml.Contains('현재 검색 결과에 없는 문헌') -and $ratingXml.Contains('필요')) 'Stale and removed-document evaluations remain visible.'
         [xml]$ratingSheet = $ratingXml
         Assert-ExportTest ($ratingSheet.GetElementsByTagName('row').Count -eq 4) 'Current, unreviewed, and removed-document ratings are included.'
         Assert-ExportCaseFields -Archive $zip -Bureau '' -Division '' -Cpc ''

@@ -8,7 +8,7 @@ function Test-NewUserMode {return $ui.AdminUserTabs.SelectedIndex -eq 1}
 function Show-NewUserForm {
     $before=$script:changing;$script:changing=$true
     try {
-        $ui.AdminUserTabs.SelectedIndex=1;$ui.AdminUserCombo.SelectedIndex=-1
+        $ui.AdminUserTabs.SelectedIndex=1;$ui.AdminUsersGrid.SelectedIndex=-1
         $ui.AdminFormScroll.ScrollToTop()
         [void]$script:requests.Remove('master:Users:')
         Show-AdminRecord ([pscustomobject]@{name='';bureau='';division='';roles=@('examiner');active=$true}) 'Users'
@@ -16,14 +16,14 @@ function Show-NewUserForm {
 }
 function Copy-AdminData($Data) {
     if ($null -eq $Data) {return [pscustomobject]@{}}
-    $clean=$Data | Select-Object * -ExcludeProperty version,path,displayName
+    $clean=$Data | Select-Object * -ExcludeProperty version,path,displayName,rolesLabel,divisionLabel,activeLabel
     $json=ConvertTo-Json -InputObject $clean -Depth 60
     if ((Get-Command ConvertFrom-Json).Parameters.ContainsKey('DateKind')) {return ConvertFrom-Json -InputObject $json -DateKind String}
     return ConvertFrom-Json -InputObject $json
 }
 function Set-AdminField($Data,[string]$Name,$Value) {$Data | Add-Member -NotePropertyName $Name -NotePropertyValue $Value -Force}
 function Get-AdminSelector([string]$Kind) {
-    switch ($Kind) {'Users' {$ui.AdminUserCombo};'Groups' {$ui.AdminGroupCombo};'Sources' {$ui.AdminSourceCombo};'Period' {$ui.AdminPeriodCombo}}
+    switch ($Kind) {'Users' {$ui.AdminUsersGrid};'Groups' {$ui.AdminGroupsGrid};'Sources' {$ui.AdminSourceCombo};'Period' {$ui.AdminPeriodCombo}}
 }
 function Get-AdminId($Data,[string]$Kind) {
     $field=@{Users='userId';Groups='groupId';Sources='sourceId';Period='period'}[$Kind]
@@ -62,16 +62,94 @@ function Set-AdminOptionLabel($Records,[string]$Kind) {
         if ($Kind -eq 'Period') {$label="$($record.period) · $(if ($record.status -eq 'Closed') {'마감'} else {'운영 중'})"}
         elseif (-not [bool](Get-UiValue $record 'active' $true)) {$label+=' (비활성)'}
         $record | Add-Member -NotePropertyName displayName -NotePropertyValue $label -Force
+        if ($Kind -in @('Users','Groups')) {Set-AdminField $record 'activeLabel' $(if ($record.active) {'활성'} else {'비활성'})}
+        if ($Kind -eq 'Users') {
+            Set-AdminField $record 'divisionLabel' $(if ($record.division) {$record.division} else {'미지정'})
+            Set-AdminField $record 'rolesLabel' (@($record.roles | ForEach-Object {switch ($_) {'admin' {'관리자'};'examiner' {'심사관'};'ai' {'AI 담당자'}}}) -join ' · ')
+        }
     }
 }
-function Refresh-AdminOptions([string]$SelectedKind='',[string]$SelectedId='') {
+function Update-AdminFilterChoices([bool]$UpdateBureaus=$true) {
+    $bureau=[string](Get-UiValue $ui.AdminBureauFilter.SelectedItem 'value')
+    $division=[string](Get-UiValue $ui.AdminDivisionFilter.SelectedItem 'value')
+    if ($UpdateBureaus) {
+        $ui.AdminBureauFilter.ItemsSource=@([pscustomobject]@{value='';label='전체 심사국'})+@( $script:adminOptions.Users | ForEach-Object {$_.bureau} | Where-Object {$_} | Sort-Object -Unique | ForEach-Object {[pscustomobject]@{value=$_;label=$_}})
+        $ui.AdminBureauFilter.SelectedItem=@($ui.AdminBureauFilter.ItemsSource | Where-Object {$_.value -eq $bureau}) | Select-Object -First 1
+        if (-not $ui.AdminBureauFilter.SelectedItem) {$ui.AdminBureauFilter.SelectedIndex=0}
+    }
+    $bureau=[string](Get-UiValue $ui.AdminBureauFilter.SelectedItem 'value')
+    $ui.AdminDivisionFilter.ItemsSource=@([pscustomobject]@{value='';label='전체 심사과'})+@( $script:adminOptions.Users | Where-Object {-not $bureau -or $_.bureau -eq $bureau} | ForEach-Object {$_.division} | Where-Object {$_} | Sort-Object -Unique | ForEach-Object {[pscustomobject]@{value=$_;label=$_}})
+    $ui.AdminDivisionFilter.SelectedItem=@($ui.AdminDivisionFilter.ItemsSource | Where-Object {$_.value -eq $division}) | Select-Object -First 1
+    if (-not $ui.AdminDivisionFilter.SelectedItem) {$ui.AdminDivisionFilter.SelectedIndex=0}
+}
+function Filter-AdminUsers([string]$SelectedId='') {
+    $search=$ui.AdminUserSearchBox.Text.Trim()
+    $bureau=[string](Get-UiValue $ui.AdminBureauFilter.SelectedItem 'value');$division=[string](Get-UiValue $ui.AdminDivisionFilter.SelectedItem 'value')
+    $rows=@($script:adminOptions.Users | Where-Object {(-not $search -or $_.name.IndexOf($search,[StringComparison]::OrdinalIgnoreCase) -ge 0) -and (-not $bureau -or $_.bureau -eq $bureau) -and (-not $division -or $_.division -eq $division)})
+    $ui.AdminUsersGrid.ItemsSource=$rows
+    $ui.AdminUsersGrid.SelectedItem=@($rows | Where-Object {$_.userId -eq $SelectedId}) | Select-Object -First 1
+    if (-not $ui.AdminUsersGrid.SelectedItem -and $rows.Count -and -not (Test-NewUserMode)) {$ui.AdminUsersGrid.SelectedIndex=0}
+    $ui.AdminUserCountText.Text="표시 $($rows.Count) / 전체 $($script:adminOptions.Users.Count)명 · 클릭하여 수정"
+    $script:adminFilterState=@{search=$ui.AdminUserSearchBox.Text;bureau=$bureau;division=$division}
+}
+function Reset-AdminUserFilters {
+    $ui.AdminUserSearchBox.Clear();$ui.AdminBureauFilter.SelectedIndex=0;$ui.AdminDivisionFilter.SelectedIndex=0
+    Update-AdminFilterChoices
+}
+function Change-AdminUserFilter([bool]$Reset=$false,[switch]$BureauChanged) {
+    if ($script:changing -or $script:busy) {return}
+    $old=$script:adminFilterState
+    if ($script:adminDirty -and -not (Confirm-Discard)) {
+        $script:changing=$true
+        try {
+            $ui.AdminUserSearchBox.Text=$old.search
+            $ui.AdminBureauFilter.SelectedItem=@($ui.AdminBureauFilter.ItemsSource | Where-Object {$_.value -eq $old.bureau}) | Select-Object -First 1
+            Update-AdminFilterChoices $false
+            $ui.AdminDivisionFilter.SelectedItem=@($ui.AdminDivisionFilter.ItemsSource | Where-Object {$_.value -eq $old.division}) | Select-Object -First 1
+        } finally {$script:changing=$false}
+        return
+    }
+    $script:changing=$true
+    # Do not replace a ComboBox's ItemsSource inside its own selection event.
+    try {if ($Reset) {Reset-AdminUserFilters} elseif ($BureauChanged) {Update-AdminFilterChoices $false};Filter-AdminUsers $script:adminLoadedId;Select-AdminRecord} finally {$script:changing=$false}
+}
+function Show-RegisteredUser {
+    if (-not $script:adminLastRegisteredId) {return}
+    if ($script:adminDirty -and -not (Confirm-Discard)) {return}
+    $before=$script:changing;$script:changing=$true
+    try {
+        $ui.AdminUserTabs.SelectedIndex=0;Reset-AdminUserFilters;Filter-AdminUsers $script:adminLastRegisteredId;Select-AdminRecord
+        $ui.AdminUsersGrid.ScrollIntoView($ui.AdminUsersGrid.SelectedItem)
+    } finally {$script:changing=$before}
+}
+function Show-AdminGroupMembers {
+    $month=Get-SelectedPeriod
+    $settings=@($script:adminOptions.Period | Where-Object {$_.period -eq $month}) | Select-Object -First 1
+    $groupId=if ($script:adminLoadedKind -eq 'Groups' -and -not $script:adminIsNew) {$script:adminLoadedId} else {''}
+    $rows=@(foreach ($member in @(Get-UiValue $settings 'members' @())) {
+        if (-not $groupId -or $member.groupId -ne $groupId) {continue}
+        $person=@($script:adminOptions.Users | Where-Object {$_.userId -eq $member.userId}) | Select-Object -First 1
+        $assigned=@(foreach ($assignment in @(Get-UiValue $settings 'assignments' @())) {
+            if ($assignment.groupId -eq $groupId -and $assignment.userId -eq $member.userId) {
+                $source=@($script:adminOptions.Sources | Where-Object {$_.sourceId -eq $assignment.sourceId}) | Select-Object -First 1
+                [string](Get-UiValue $source 'name' $assignment.sourceId)
+            }
+        })
+        [pscustomobject]@{userId=$member.userId;division=(Get-UiValue $person 'division');name=(Get-UiValue $person 'name' $member.userId);assignments=$(if ($assigned.Count) {$assigned -join ', '} else {'—'})}
+    })
+    $ui.GroupMembersGrid.ItemsSource=@($rows | Sort-Object division,name)
+    $ui.GroupMembersTitle.Text="$month 참여 명단 · $($rows.Count)명"
+    $ui.GroupMembersHint.Text=if ($script:adminIsNew) {'그룹을 저장한 뒤 월 운영에서 참여자를 배정하세요.'} elseif ($rows.Count) {'상단에서 선택한 운영월 기준입니다. 참여자와 AI 담당자 배정은 월 운영에서 수정합니다.'} else {'이 운영월에 배정된 참여자가 없습니다. 월 운영에서 참여자를 배정할 수 있습니다.'}
+    $ui.EditGroupPeriodButton.IsEnabled=[bool]$settings -and [bool]$groupId
+}
+function Refresh-AdminOptions([string]$SelectedKind='',[string]$SelectedId='',$Snapshot=$null) {
     if ('admin' -notin $context.User.roles) {return}
-    $script:adminOptions=@{
+    $script:adminOptions=if ($Snapshot) {@{Users=@($Snapshot.Users);Groups=@($Snapshot.Groups);Sources=@($Snapshot.Sources);Period=@($Snapshot.Period)}} else {@{
         Users=@(Get-Users -Context $context | Sort-Object division,name,userId)
         Groups=@(Get-Groups -Context $context | Sort-Object name,groupId)
         Sources=@(Get-Sources -Context $context | Sort-Object name,sourceId)
         Period=@(Get-Periods -Context $context)
-    }
+    }}
     $before=$script:changing;$script:changing=$true
     try {
         foreach ($kind in @('Users','Groups','Sources','Period')) {
@@ -83,6 +161,9 @@ function Refresh-AdminOptions([string]$SelectedKind='',[string]$SelectedId='') {
             $selector.SelectedItem=@($script:adminOptions[$kind] | Where-Object {(Get-AdminId $_ $kind) -eq $oldId}) | Select-Object -First 1
             if (-not $selector.SelectedItem -and $selector.Items.Count -gt 0 -and -not ($kind -eq 'Users' -and (Test-NewUserMode))) {$selector.SelectedIndex=0}
         }
+        Update-AdminFilterChoices
+        if ($SelectedKind -eq 'Users') {Reset-AdminUserFilters}
+        Filter-AdminUsers ([string](Get-UiValue $ui.AdminUsersGrid.SelectedItem 'userId'))
         $ui.UserBureauBox.ItemsSource=@($script:adminOptions.Users | ForEach-Object {[string](Get-UiValue $_ 'bureau')} | Where-Object {$_} | Sort-Object -Unique)
         Update-AdminDivisionOptions
         $script:adminView.Resources['AdminExaminerOptions']=@($script:adminOptions.Users | Where-Object {'examiner' -in $_.roles})
@@ -136,9 +217,15 @@ function Update-AdminEditor {
     $ui.AdminUserSelectionPanel.Visibility=if ($kind -eq 'Users' -and -not $newUser) {'Visible'} else {'Collapsed'}
     $ui.NewUserButton.Visibility=if ($kind -eq 'Users') {'Collapsed'} else {'Visible'}
     $ui.NewUserButton.Content=@{Users='신규 항목';Groups='신규 그룹';Sources='신규 조사 방식';Period='신규 월'}[$kind]
-    $ui.UserFormTitle.Text=if ($newUser) {'신규 사용자 정보 입력'} else {'기존 사용자 정보 수정'}
-    $ui.AdminSaveButton.Content=if ($newUser) {'사용자 등록'} else {'변경사항 저장'}
+    $roster=($kind -eq 'Users' -and -not $newUser) -or $kind -eq 'Groups'
+    $ui.AdminRosterPanel.Visibility=if ($roster) {'Visible'} else {'Collapsed'}
+    $ui.AdminRosterColumn.Width=if ($roster) {470} else {0};$ui.AdminRosterGap.Width=if ($roster) {18} else {0}
+    $ui.AdminGroupSelectionPanel.Visibility=if ($kind -eq 'Groups') {'Visible'} else {'Collapsed'}
+    $ui.UserFormTitle.Text=if ($newUser) {'신규 사용자 정보 입력'} elseif ($script:adminLoadedKind -eq 'Users') {"$($script:adminOriginal.name) — 사용자 정보 수정"} else {'수정할 사용자를 선택하세요'}
+    $ui.GroupFormTitle.Text=if ($script:adminIsNew) {'신규 그룹 정보 입력'} elseif ($script:adminLoadedKind -eq 'Groups') {"$($script:adminOriginal.name) — 그룹 정보 수정"} else {'그룹 정보'}
+    $ui.AdminSaveButton.Content=if ($newUser) {'신규 사용자 등록'} else {'변경사항 저장'}
     $ui.AdminReloadButton.Visibility=if ($newUser) {'Collapsed'} else {'Visible'}
+    $ui.ViewRegisteredUserButton.Visibility=if ($newUser -and $script:adminLastRegisteredId) {'Visible'} else {'Collapsed'}
 }
 function Show-AdminRecord($Data,[string]$Kind) {
     $before=$script:changing;$script:changing=$true
@@ -155,7 +242,7 @@ function Show-AdminRecord($Data,[string]$Kind) {
                 if (-not $script:adminIsNewUser) {$script:adminLastUserId=$script:adminLoadedId}
                 Set-UserForm $Data
             }
-            'Groups' {$ui.GroupNameBox.Text=[string](Get-UiValue $Data 'name');$ui.GroupActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true)}
+            'Groups' {$ui.GroupNameBox.Text=[string](Get-UiValue $Data 'name');$ui.GroupActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true);Show-AdminGroupMembers}
             'Sources' {$ui.SourceNameBox.Text=[string](Get-UiValue $Data 'name');$ui.SourceTypeCombo.SelectedValue=[string](Get-UiValue $Data 'type' 'AI');$ui.SourceActiveCheck.IsChecked=[bool](Get-UiValue $Data 'active' $true)}
             'Period' {
                 $month=[string](Get-UiValue $Data 'period' (Get-Date -Format 'yyyy-MM'))
@@ -177,7 +264,7 @@ function Show-AdminRecord($Data,[string]$Kind) {
         Update-AdminEditor
         $label=if ($script:adminIsNew) {'새 항목 · 입력한 내용을 저장하세요.'} else {"수정 후 저장하세요."}
         if ($Kind -eq 'Users') {
-            $label=if ($script:adminIsNewUser) {'성명과 소속·역할을 입력한 뒤 사용자 등록을 누르세요. 식별번호는 자동으로 부여됩니다.'} else {"수정 대상: $($Data.name) · 정보를 변경한 뒤 변경사항 저장을 누르세요."}
+            $label=if ($script:adminIsNewUser) {'성명과 소속·역할을 입력한 뒤 신규 사용자 등록을 누르세요. 식별번호는 자동으로 부여됩니다.'} else {"수정 대상: $($Data.name) · 정보를 변경한 뒤 변경사항 저장을 누르세요."}
         }
         $ui.AdminEditorStateText.Text=$label
         $script:adminBaselineStamp=Get-AdminInputStamp
@@ -200,7 +287,7 @@ function Select-AdminRecord {
         $script:adminLoadedKind=$null;$script:adminLoadedId='';$script:adminVersion=0;$script:adminDirty=$false
         if ($kind -eq 'Users') {Set-UserForm $null}
         Update-AdminEditor;$ui.AdminEditorStateText.Text='등록된 항목이 없습니다. 신규 버튼을 눌러 등록하세요.'
-        if ($kind -eq 'Users') {$ui.AdminEditorStateText.Text='등록된 사용자가 없습니다. 신규 사용자 등록 탭에서 사용자를 추가하세요.'}
+        if ($kind -eq 'Users') {$ui.AdminEditorStateText.Text=if ($script:adminOptions.Users.Count) {'검색 조건에 맞는 사용자가 없습니다. 전체 명단을 누르거나 검색 조건을 변경하세요.'} else {'등록된 사용자가 없습니다. 신규 사용자 등록 탭에서 사용자를 추가하세요.'}}
     }
 }
 function Restore-AdminSelection {
@@ -292,9 +379,10 @@ function Save-AdminForm {
         $script:allGroups=@($script:adminOptions.Groups);$script:allSources=@($script:adminOptions.Sources)
         if ($registered) {
             $script:adminLastUserId=$id
+            $script:adminLastRegisteredId=$id
             Show-NewUserForm
             $ui.AdminSavedText.Text="$($saved.name) 등록 완료"
-            $ui.AdminEditorStateText.Text='등록을 완료했습니다. 다음 사용자를 입력하거나 기존 사용자 관리 탭에서 등록한 정보를 확인하세요.'
+            $ui.AdminEditorStateText.Text='등록을 완료했습니다. 다음 사용자를 입력하거나 등록한 사용자 보기를 누르세요.'
         } else {Show-AdminRecord $saved $kind;$ui.AdminSavedText.Text='변경사항 저장 완료'}
         $ui.AdminSavedText.Foreground='#147D57'
         if ($kind -eq 'Period') {Sync-AdminPeriodList $id;Load-Cases}
@@ -321,12 +409,32 @@ function Change-PeriodStatus([string]$Status) {
         Show-AdminRecord $saved Period;Sync-AdminPeriodList $saved.period;Load-Cases
     }
 }
+function Load-AdminWorkspace {
+    $month=Get-SelectedPeriod;$script:lastPeriod=$ui.PeriodCombo.SelectedItem
+    $script:adminWorkspaceKind=Get-AdminKind
+    $script:adminWorkspaceId=if ($script:adminWorkspaceKind -eq 'Period') {$month} else {$script:adminLoadedId}
+    $script:cases=@();$ui.CasesGrid.ItemsSource=@();Clear-Detail;Set-WorkspacePresentation
+    Set-Status '사용자·그룹·월 운영 설정 조회 중…'
+    Invoke-UiWork -Work {
+        param($ctx)
+        [pscustomobject]@{Users=@(Get-Users $ctx | Sort-Object division,name,userId);Groups=@(Get-Groups $ctx | Sort-Object name,groupId);Sources=@(Get-Sources $ctx | Sort-Object name,sourceId);Period=@(Get-Periods $ctx)}
+    } -Arguments @($context) -Completed {
+        param($result)
+        Refresh-AdminOptions -SelectedKind $script:adminWorkspaceKind -SelectedId $script:adminWorkspaceId -Snapshot $result[0]
+        $script:loadedPeriod=@($script:adminOptions.Period | Where-Object {$_.period -eq (Get-SelectedPeriod)}) | Select-Object -First 1
+        $script:allGroups=@($script:adminOptions.Groups);$script:allSources=@($script:adminOptions.Sources)
+        Select-AdminRecord;Set-WorkspacePresentation
+        Set-Status '운영 설정 조회 완료 · 명단에서 수정할 대상을 선택하세요.'
+    }
+}
 function Reset-AdminEditor {
+    $script:adminLastRegisteredId='';$script:adminFilterState=@{search='';bureau='';division=''}
     $script:adminDirty=$false;$script:adminBaselineStamp='';$script:adminVersion=0;$script:adminLoadedKind=$null;$script:adminLoadedId='';$script:adminOriginal=[pscustomobject]@{};$script:adminIsNew=$false;$script:adminIsNewUser=$false;$script:adminLastUserId=''
     $script:adminOptions=@{Users=@();Groups=@();Sources=@();Period=@()}
     $before=$script:changing;$script:changing=$true
     try {
         $script:adminMembers.Clear();$script:adminAssignments.Clear();$ui.AdminKindCombo.SelectedIndex=0;$ui.AdminUserTabs.SelectedIndex=0
+        $ui.AdminUserSearchBox.Clear();$ui.AdminBureauFilter.ItemsSource=@();$ui.AdminDivisionFilter.ItemsSource=@()
         foreach ($kind in @('Users','Groups','Sources','Period')) {(Get-AdminSelector $kind).ItemsSource=@()}
         Update-AdminEditor
         if ('admin' -in $context.User.roles) {Refresh-AdminOptions;Select-AdminRecord}
@@ -342,8 +450,8 @@ function Initialize-AdminUi {
     $reader=[Xml.XmlReader]::Create((Join-Path $appDirectory 'Views\Admin.xaml'))
     try {$script:adminView=[Windows.Markup.XamlReader]::Load($reader)} finally {$reader.Close()}
     $ui.AdminContentHost.Content=$script:adminView
-    foreach ($name in @('AdminUserTabs','AdminUserSelectionPanel','UserFormTitle','AdminFormScroll')) {$ui[$name]=$script:adminView.FindName($name)}
-    foreach ($name in @('AdminKindCombo','AdminUserCombo','AdminGroupCombo','AdminSourceCombo','AdminPeriodCombo','NewUserButton','AdminEditorStateText','AdminSaveButton','AdminReloadButton','AdminSavedText','UserFieldsPanel','UserNameBox','UserBureauBox','UserDivisionBox','UserExaminerCheck','UserAiCheck','UserAdminCheck','UserActiveCheck','GroupFieldsPanel','GroupNameBox','GroupActiveCheck','SourceFieldsPanel','SourceNameBox','SourceTypeCombo','SourceActiveCheck','PeriodFieldsPanel','PeriodStateText','ClosePeriodButton','ReopenPeriodButton','PeriodYearCombo','PeriodMonthCombo','PeriodLimitCombo','SubmissionDeadlinePicker','DeliveryDeadlinePicker','EvaluationDeadlinePicker','PeriodSourcesList','PeriodMembersGrid','PeriodAssignmentsGrid','AddPeriodMemberButton','RemovePeriodMemberButton','AddPeriodAssignmentButton','RemovePeriodAssignmentButton')) {$ui[$name]=$script:adminView.FindName($name)}
+    foreach ($name in @('AdminUserTabs','AdminUserSelectionPanel','UserFormTitle','AdminFormScroll','AdminRosterPanel','AdminRosterColumn','AdminRosterGap','AdminGroupSelectionPanel','AdminUserSearchBox','AdminBureauFilter','AdminDivisionFilter','AdminUserCountText','AdminFilterResetButton','ViewRegisteredUserButton','GroupFormTitle','GroupMembersTitle','GroupMembersHint','GroupMembersGrid','EditGroupPeriodButton')) {$ui[$name]=$script:adminView.FindName($name)}
+    foreach ($name in @('AdminKindCombo','AdminUsersGrid','AdminGroupsGrid','AdminSourceCombo','AdminPeriodCombo','NewUserButton','AdminEditorStateText','AdminSaveButton','AdminReloadButton','AdminSavedText','UserFieldsPanel','UserNameBox','UserBureauBox','UserDivisionBox','UserExaminerCheck','UserAiCheck','UserAdminCheck','UserActiveCheck','GroupFieldsPanel','GroupNameBox','GroupActiveCheck','SourceFieldsPanel','SourceNameBox','SourceTypeCombo','SourceActiveCheck','PeriodFieldsPanel','PeriodStateText','ClosePeriodButton','ReopenPeriodButton','PeriodYearCombo','PeriodMonthCombo','PeriodLimitCombo','SubmissionDeadlinePicker','DeliveryDeadlinePicker','EvaluationDeadlinePicker','PeriodSourcesList','PeriodMembersGrid','PeriodAssignmentsGrid','AddPeriodMemberButton','RemovePeriodMemberButton','AddPeriodAssignmentButton','RemovePeriodAssignmentButton')) {$ui[$name]=$script:adminView.FindName($name)}
     $script:adminMembers=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]';$script:adminAssignments=New-Object 'System.Collections.ObjectModel.ObservableCollection[object]'
     $ui.PeriodMembersGrid.AutoGenerateColumns=$false;$ui.PeriodAssignmentsGrid.AutoGenerateColumns=$false
     $ui.PeriodMembersGrid.CanUserAddRows=$false;$ui.PeriodAssignmentsGrid.CanUserAddRows=$false
@@ -357,8 +465,18 @@ function Initialize-AdminUi {
         if ($eventArgs.Source -ne $ui.AdminUserTabs -or $script:changing -or $script:busy) {return}
         Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {Restore-AdminSelection;return};Select-AdminRecord}
     })
-    foreach ($selector in @($ui.AdminUserCombo,$ui.AdminGroupCombo,$ui.AdminSourceCombo,$ui.AdminPeriodCombo)) {$selector.Add_SelectionChanged({if ($script:changing -or $script:busy) {return};Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {Restore-AdminSelection;return};Select-AdminRecord}})}
+    foreach ($selector in @($ui.AdminUsersGrid,$ui.AdminGroupsGrid,$ui.AdminSourceCombo,$ui.AdminPeriodCombo)) {$selector.Add_SelectionChanged({if ($script:changing -or $script:busy) {return};Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {Restore-AdminSelection;return};Select-AdminRecord}})}
     $ui.NewUserButton.Add_Click({Invoke-UiAction {New-AdminRecord}});$ui.AdminSaveButton.Add_Click({Invoke-UiAction {Save-AdminForm}})
+    $ui.AdminUserSearchBox.Add_TextChanged({Invoke-UiAction {Change-AdminUserFilter}})
+    $ui.AdminBureauFilter.Add_SelectionChanged({Invoke-UiAction {Change-AdminUserFilter -BureauChanged}})
+    $ui.AdminDivisionFilter.Add_SelectionChanged({Invoke-UiAction {Change-AdminUserFilter}})
+    $ui.AdminFilterResetButton.Add_Click({Invoke-UiAction {Change-AdminUserFilter $true}})
+    $ui.ViewRegisteredUserButton.Add_Click({Invoke-UiAction {Show-RegisteredUser}})
+    $ui.EditGroupPeriodButton.Add_Click({Invoke-UiAction {
+        if ($script:adminDirty -and -not (Confirm-Discard)) {return}
+        $before=$script:changing;$script:changing=$true
+        try {$ui.AdminKindCombo.SelectedIndex=3;$ui.AdminPeriodCombo.SelectedValue=(Get-SelectedPeriod);Select-AdminRecord} finally {$script:changing=$before}
+    }})
     $ui.AdminReloadButton.Add_Click({Invoke-UiAction {if ($script:adminDirty -and -not (Confirm-Discard)) {return};$kind=Get-AdminKind;$id=$script:adminLoadedId;Refresh-AdminOptions -SelectedKind $kind -SelectedId $id;Select-AdminRecord;Set-Status '운영 목록을 새로 불러왔습니다.'}})
     $ui.ClosePeriodButton.Add_Click({Invoke-UiAction {Change-PeriodStatus 'Closed'}});$ui.ReopenPeriodButton.Add_Click({Invoke-UiAction {Change-PeriodStatus 'Open'}})
     foreach ($box in @($ui.UserNameBox,$ui.GroupNameBox,$ui.SourceNameBox)) {$box.Add_TextChanged({Set-AdminDirty})}

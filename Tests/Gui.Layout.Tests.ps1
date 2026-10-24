@@ -129,10 +129,15 @@ try {
     Assert-Layout ($controls.PublishedGrid.ActualHeight -ge 300) 'Published result list collapsed.'
     Assert-ButtonVisible $controls.GoEvaluationButton
     $controls.MainTabs.SelectedItem=$controls.AdminTab
+    $window.FindName('CaseSidebar').Visibility='Collapsed';$window.FindName('CaseSidebarColumn').MinWidth=0;$window.FindName('CaseSidebarColumn').Width=0;$window.FindName('CaseGapColumn').Width=0
+    $window.FindName('CaseHeaderPanel').Visibility='Collapsed';$window.FindName('CaseHeaderRow').Height=0
     foreach ($mode in @(0,1)) {
         $adminView.FindName('AdminUserTabs').SelectedIndex=$mode
         $adminView.FindName('AdminUserSelectionPanel').Visibility=if ($mode -eq 0) {'Visible'} else {'Collapsed'}
-        $adminView.FindName('AdminSaveButton').Content=if ($mode -eq 0) {'변경사항 저장'} else {'사용자 등록'}
+        $adminView.FindName('AdminRosterPanel').Visibility=if ($mode -eq 0) {'Visible'} else {'Collapsed'}
+        $adminView.FindName('AdminRosterColumn').Width=if ($mode -eq 0) {470} else {0};$adminView.FindName('AdminRosterGap').Width=if ($mode -eq 0) {18} else {0}
+        $adminView.FindName('AdminSaveButton').Content=if ($mode -eq 0) {'변경사항 저장'} else {'신규 사용자 등록'}
+        $adminView.FindName('ViewRegisteredUserButton').Visibility=if ($mode -eq 1) {'Visible'} else {'Collapsed'}
         $adminScroll=$adminView.FindName('AdminFormScroll')
         $adminScroll.ScrollToBottom();Update-LayoutTest
         Save-LayoutImage "UserMode-$mode-Minimum"
@@ -143,6 +148,8 @@ try {
         $active=$adminView.FindName('UserActiveCheck');$point=Point-In $active $adminScroll
         Assert-Layout ($adminScroll.ViewportHeight -ge 100 -and $point.Y -ge 0 -and $point.Y+$active.ActualHeight -le $adminScroll.ViewportHeight+1) "User role/activation fields cannot be reached by scrolling: mode=$mode viewport=$($adminScroll.ViewportHeight) activeTop=$($point.Y) activeHeight=$($active.ActualHeight) offset=$($adminScroll.VerticalOffset)."
         Assert-ButtonVisible ($adminView.FindName('AdminSaveButton'))
+        if ($mode -eq 0) {Assert-Layout ($adminView.FindName('AdminUsersGrid').ActualHeight -ge 250 -and $adminView.FindName('AdminFormScroll').ActualWidth -ge 450) 'User roster or details collapse at the minimum size.'}
+        else {Assert-ButtonVisible ($adminView.FindName('ViewRegisteredUserButton'))}
     }
     $adminView.FindName('AdminUserTabs').Visibility='Collapsed'
     $adminView.FindName('AdminUserSelectionPanel').Visibility='Collapsed'

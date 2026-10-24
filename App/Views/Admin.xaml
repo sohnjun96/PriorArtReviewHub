@@ -3,21 +3,42 @@
     <Style x:Key="Primary" TargetType="Button"><Setter Property="Background" Value="#2257C7"/><Setter Property="Foreground" Value="White"/><Setter Property="BorderBrush" Value="#2257C7"/><Setter Property="Padding" Value="15,8"/><Setter Property="Margin" Value="0,0,8,0"/></Style>
     <Style x:Key="AdminLabel" TargetType="TextBlock"><Setter Property="Foreground" Value="#52647C"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
     <Style x:Key="AdminSection" TargetType="TextBlock"><Setter Property="FontSize" Value="17"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,14"/><Setter Property="Foreground" Value="#172B4D"/></Style>
+    <Style x:Key="RosterCell" TargetType="DataGridCell"><Setter Property="Padding" Value="8,3"/><Setter Property="BorderThickness" Value="0"/><Setter Property="VerticalContentAlignment" Value="Center"/><Style.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="#DBEAFE"/><Setter Property="Foreground" Value="#173D76"/><Setter Property="FontWeight" Value="SemiBold"/></Trigger></Style.Triggers></Style>
   </UserControl.Resources>
   <DockPanel Margin="16">
     <StackPanel DockPanel.Dock="Top">
       <Border Background="#F4F7FC" CornerRadius="7" Padding="10" Margin="0,0,0,10">
         <Grid><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="135"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <ComboBox x:Name="AdminKindCombo"><ComboBoxItem Content="사용자" Tag="Users"/><ComboBoxItem Content="그룹" Tag="Groups"/><ComboBoxItem Content="조사 방식" Tag="Sources"/><ComboBoxItem Content="월 운영" Tag="Period"/></ComboBox>
-          <Grid Grid.Column="1" Margin="10,0"><TabControl x:Name="AdminUserTabs" BorderThickness="0" Background="Transparent" SelectedIndex="0"><TabItem Header="기존 사용자 관리" Padding="14,8"/><TabItem Header="신규 사용자 등록" Padding="14,8"/></TabControl><ComboBox x:Name="AdminGroupCombo" DisplayMemberPath="displayName" SelectedValuePath="groupId" Visibility="Collapsed"/><ComboBox x:Name="AdminSourceCombo" DisplayMemberPath="displayName" SelectedValuePath="sourceId" Visibility="Collapsed"/><ComboBox x:Name="AdminPeriodCombo" DisplayMemberPath="displayName" SelectedValuePath="period" Visibility="Collapsed"/></Grid>
+          <Grid Grid.Column="1" Margin="10,0"><TabControl x:Name="AdminUserTabs" BorderThickness="0" Background="Transparent" SelectedIndex="0"><TabItem Header="기존 사용자 관리" Padding="14,8"/><TabItem Header="신규 사용자 등록" Padding="14,8"/></TabControl><ComboBox x:Name="AdminSourceCombo" DisplayMemberPath="displayName" SelectedValuePath="sourceId" Visibility="Collapsed"/><ComboBox x:Name="AdminPeriodCombo" DisplayMemberPath="displayName" SelectedValuePath="period" Visibility="Collapsed"/></Grid>
           <Button x:Name="NewUserButton" Grid.Column="2" Content="신규 항목" Margin="0" Visibility="Collapsed"/>
-          <Grid x:Name="AdminUserSelectionPanel" Grid.Row="1" Grid.ColumnSpan="3" Margin="0,12,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="135"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><TextBlock Text="관리할 사용자" VerticalAlignment="Center" Foreground="#52647C"/><ComboBox x:Name="AdminUserCombo" Grid.Column="1" Margin="10,0,0,0" DisplayMemberPath="displayName" SelectedValuePath="userId"/></Grid>
         </Grid>
       </Border>
     </StackPanel>
+    <Grid x:Name="AdminBody"><Grid.ColumnDefinitions><ColumnDefinition x:Name="AdminRosterColumn" Width="470"/><ColumnDefinition x:Name="AdminRosterGap" Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+    <ScrollViewer x:Name="AdminRosterPanel" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <Grid MinHeight="455" Height="{Binding ViewportHeight, RelativeSource={RelativeSource AncestorType={x:Type ScrollViewer}}}">
+        <Grid x:Name="AdminUserSelectionPanel"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="250"/></Grid.RowDefinitions>
+          <StackPanel Margin="0,0,0,10">
+            <TextBlock Text="사용자 명단" Style="{StaticResource AdminSection}" Margin="0,0,0,8"/>
+            <TextBlock Text="이름 검색" Style="{StaticResource AdminLabel}"/><TextBox x:Name="AdminUserSearchBox" ToolTip="이름 일부를 입력하면 명단을 바로 좁힙니다."/>
+            <Grid Margin="0,8,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><ComboBox x:Name="AdminBureauFilter" DisplayMemberPath="label" SelectedValuePath="value" ToolTip="심사국 필터" Margin="0,0,6,0"/><ComboBox x:Name="AdminDivisionFilter" Grid.Column="1" DisplayMemberPath="label" SelectedValuePath="value" ToolTip="심사과 필터"/></Grid>
+            <DockPanel Margin="0,8,0,0"><Button x:Name="AdminFilterResetButton" Content="전체 명단" DockPanel.Dock="Right" Margin="6,0,0,0"/><TextBlock x:Name="AdminUserCountText" VerticalAlignment="Center" Foreground="#63738A" TextWrapping="Wrap"/></DockPanel>
+          </StackPanel>
+          <DataGrid x:Name="AdminUsersGrid" Grid.Row="1" MinHeight="250" IsReadOnly="True" CellStyle="{StaticResource RosterCell}" SelectedValuePath="userId" ToolTip="사용자를 클릭하면 오른쪽에서 바로 수정할 수 있습니다."><DataGrid.Columns>
+            <DataGridTextColumn Header="심사과" Binding="{Binding divisionLabel}" Width="*" MinWidth="100"/><DataGridTextColumn Header="이름" Binding="{Binding name}" Width="110"/><DataGridTextColumn Header="역할" Binding="{Binding rolesLabel}" Width="145"/><DataGridTextColumn Header="사용" Binding="{Binding activeLabel}" Width="65"/>
+          </DataGrid.Columns></DataGrid>
+        </Grid>
+        <Grid x:Name="AdminGroupSelectionPanel" Visibility="Collapsed"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="250"/></Grid.RowDefinitions>
+          <StackPanel Margin="0,0,0,10"><TextBlock Text="그룹 목록" Style="{StaticResource AdminSection}" Margin="0,0,0,8"/><TextBlock Text="그룹을 클릭하면 정보와 선택한 운영월의 참여 명단을 표시합니다." Foreground="#63738A" TextWrapping="Wrap"/></StackPanel>
+          <DataGrid x:Name="AdminGroupsGrid" Grid.Row="1" MinHeight="250" IsReadOnly="True" CellStyle="{StaticResource RosterCell}" SelectedValuePath="groupId"><DataGrid.Columns><DataGridTextColumn Header="그룹" Binding="{Binding name}" Width="*"/><DataGridTextColumn Header="사용" Binding="{Binding activeLabel}" Width="80"/></DataGrid.Columns></DataGrid>
+        </Grid>
+      </Grid>
+    </ScrollViewer>
+    <DockPanel Grid.Column="2">
     <Border DockPanel.Dock="Bottom" BorderBrush="#E0E6EF" BorderThickness="0,1,0,0" Padding="0,10,0,0" Margin="0,10,0,0">
       <StackPanel>
-        <WrapPanel><Button x:Name="AdminSaveButton" Content="변경사항 저장" Style="{StaticResource Primary}"/><Button x:Name="AdminReloadButton" Content="목록 새로 고침"/><TextBlock x:Name="AdminSavedText" Foreground="#63738A" VerticalAlignment="Center"/></WrapPanel>
+        <WrapPanel><Button x:Name="AdminSaveButton" Content="변경사항 저장" Style="{StaticResource Primary}"/><Button x:Name="AdminReloadButton" Content="목록 새로 고침"/><Button x:Name="ViewRegisteredUserButton" Content="등록한 사용자 보기" Visibility="Collapsed"/><TextBlock x:Name="AdminSavedText" Foreground="#63738A" VerticalAlignment="Center" TextWrapping="Wrap"/></WrapPanel>
       </StackPanel>
     </Border>
     <ScrollViewer x:Name="AdminFormScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -30,7 +51,11 @@
           <TextBlock Text="역할 · 여러 개 선택 가능" Style="{StaticResource AdminLabel}" Margin="0,18,0,10"/><WrapPanel><CheckBox x:Name="UserExaminerCheck" Content="심사관" Margin="0,0,22,10"/><CheckBox x:Name="UserAiCheck" Content="AI 담당자" Margin="0,0,22,10"/><CheckBox x:Name="UserAdminCheck" Content="총괄관리자" Margin="0,0,0,10"/></WrapPanel><CheckBox x:Name="UserActiveCheck" Content="활성 사용자" Margin="0,8,0,10"/>
           <TextBlock Text="심사국·심사과는 선택 사항입니다. 월 운영에서 참여 그룹과 담당 AI를 배정할 수 있습니다." TextWrapping="Wrap" Foreground="#63738A" LineHeight="23"/>
         </StackPanel>
-        <StackPanel x:Name="GroupFieldsPanel" Visibility="Collapsed"><TextBlock Text="그룹 정보" Style="{StaticResource AdminSection}"/><TextBlock Text="그룹 이름" Style="{StaticResource AdminLabel}"/><TextBox x:Name="GroupNameBox" MaxLength="100"/><CheckBox x:Name="GroupActiveCheck" Content="활성 그룹" Margin="0,18,0,0"/></StackPanel>
+        <StackPanel x:Name="GroupFieldsPanel" Visibility="Collapsed"><TextBlock x:Name="GroupFormTitle" Text="그룹 정보" Style="{StaticResource AdminSection}"/><TextBlock Text="그룹 이름" Style="{StaticResource AdminLabel}"/><TextBox x:Name="GroupNameBox" MaxLength="100"/><CheckBox x:Name="GroupActiveCheck" Content="활성 그룹" Margin="0,18,0,0"/>
+          <TextBlock x:Name="GroupMembersTitle" Style="{StaticResource AdminSection}" Margin="0,24,0,8"/><TextBlock x:Name="GroupMembersHint" Foreground="#63738A" TextWrapping="Wrap" Margin="0,0,0,10"/>
+          <DataGrid x:Name="GroupMembersGrid" Height="250" MinHeight="250" IsReadOnly="True"><DataGrid.Columns><DataGridTextColumn Header="심사과" Binding="{Binding division}" Width="*" MinWidth="100"/><DataGridTextColumn Header="이름" Binding="{Binding name}" Width="*" MinWidth="150"/><DataGridTextColumn Header="담당 AI" Binding="{Binding assignments}" Width="*" MinWidth="120"/></DataGrid.Columns></DataGrid>
+          <Button x:Name="EditGroupPeriodButton" Content="이 운영월의 참여·AI 배정 수정" HorizontalAlignment="Left" Margin="0,12,0,0"/>
+        </StackPanel>
         <StackPanel x:Name="SourceFieldsPanel" Visibility="Collapsed"><TextBlock Text="조사 방식 정보" Style="{StaticResource AdminSection}"/><TextBlock Text="표시 이름" Style="{StaticResource AdminLabel}"/><TextBox x:Name="SourceNameBox" MaxLength="100"/><TextBlock Text="유형" Style="{StaticResource AdminLabel}" Margin="0,15,0,6"/><ComboBox x:Name="SourceTypeCombo" SelectedValuePath="Tag"><ComboBoxItem Content="AI" Tag="AI"/><ComboBoxItem Content="일반 조사" Tag="General"/></ComboBox><CheckBox x:Name="SourceActiveCheck" Content="활성 조사 방식" Margin="0,18,0,0"/></StackPanel>
         <StackPanel x:Name="PeriodFieldsPanel" Visibility="Collapsed">
           <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="월별 운영 설정" Style="{StaticResource AdminSection}"/><WrapPanel Grid.Column="1"><Button x:Name="ClosePeriodButton" Content="월 마감"/><Button x:Name="ReopenPeriodButton" Content="재개방" Margin="0"/></WrapPanel></Grid>
@@ -43,5 +68,7 @@
         </StackPanel>
       </StackPanel>
     </ScrollViewer>
+    </DockPanel>
+    </Grid>
   </DockPanel>
 </UserControl>

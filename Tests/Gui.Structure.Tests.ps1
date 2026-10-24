@@ -144,7 +144,11 @@ try {
     Assert-AdminChoiceColumn $assignmentsGrid 0 userId userId
     Assert-AdminChoiceColumn $assignmentsGrid 1 groupId groupId
     Assert-AdminChoiceColumn $assignmentsGrid 2 sourceId sourceId
-    foreach ($name in @('AdminKindCombo', 'AdminUserCombo', 'AdminGroupCombo', 'AdminSourceCombo', 'AdminPeriodCombo', 'SourceTypeCombo', 'PeriodYearCombo', 'PeriodMonthCombo')) {
+    foreach ($name in @('AdminUsersGrid','AdminGroupsGrid','GroupMembersGrid')) {
+        $grid=Find-TestControl $name
+        if ($grid -isnot [Windows.Controls.DataGrid] -or -not $grid.IsReadOnly -or $grid.CanUserAddRows) {throw "Administrator list '$name' must select records without editing rows directly."}
+    }
+    foreach ($name in @('AdminKindCombo', 'AdminBureauFilter', 'AdminDivisionFilter', 'AdminSourceCombo', 'AdminPeriodCombo', 'SourceTypeCombo', 'PeriodYearCombo', 'PeriodMonthCombo')) {
         $combo = Find-TestControl $name
         if ($combo -isnot [Windows.Controls.ComboBox] -or $combo.IsEditable) { throw "Administrator selector '$name' must use predefined dropdown choices." }
     }

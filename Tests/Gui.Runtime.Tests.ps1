@@ -57,7 +57,8 @@ try {
     if (-not $taskAdminSession.dropdownBindingsVerified) {throw '평가 드롭다운을 선택한 값이 실제 평가 행에 즉시 반영되지 않았습니다.'}
     if (-not $taskAdminSession.singleClickEditingVerified) {throw '문헌번호 셀을 한 번 클릭해 바로 수정할 수 없습니다.'}
     if (-not $taskAdminSession.automaticDeliveryRefreshVerified) {throw 'AI 검색 결과를 저장한 후 선택 출원의 결과·평가 화면이 자동으로 갱신되지 않았습니다.'}
-    if (-not $taskAdminSession.automaticUserLoadVerified) {throw '사용자를 드롭다운에서 선택한 뒤 추가 불러오기 없이 수정할 수 없습니다.'}
+    if (-not $taskAdminSession.automaticUserLoadVerified) {throw '사용자 명단을 선택한 뒤 추가 불러오기 없이 수정할 수 없습니다.'}
+    if (-not $taskAdminSession.adminRosterFlowVerified) {throw '사용자 명단·검색·등록 확인 또는 그룹별 참여 명단 연결 검증에 실패했습니다.'}
     if (-not $taskAdminSession.adminFormDisplayVerified) {throw '월 운영의 참여자·AI 배정 폼을 조회한 것만으로 미저장 변경이 발생했습니다.'}
     if (-not $taskAdminSession.caseScrollVerified) {throw '다른 출원으로 이동할 때 화면 위치 초기화 또는 같은 출원 재조회 시 위치 유지에 실패했습니다.'}
     if (-not $taskAdminSession.separateUserFlowsVerified) {throw '신규 사용자 등록과 기존 사용자 수정·비활성화 절차가 분리되지 않았습니다.'}

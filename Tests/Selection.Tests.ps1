@@ -62,7 +62,7 @@ try {
     Check ($cases.Count -eq 2 -and @(Get-Cases $ai $month Assigned).Count -eq 2) 'Confirmed cases not published together.'
     Check (@($cases | Where-Object {$_.applicationNumber -eq '10-2026-0000001' -and $_.cpc -eq 'G06F 16/00'}).Count -eq 1) 'Confirmation lost normalized number or CPC.'
     Check ((Save-TargetSelection $user $month 1 $confirmRequest Confirmed $rows).version -eq 2) 'Confirmation retry duplicated cases.'
-    Reject {Save-TargetSelection $user $month 2 (Request) Draft @()} '이미 대상건'
+    Reject {Save-TargetSelection $user $month 2 (Request) Draft @()} '이미 대상 건'
     Reject {Save-TargetSelection $user $month 1 (Request) Confirmed $rows} '다른 창'
     Write-Output 'PASS interrupted confirmation hides all prepared cases; same request recovers exactly once'
 
@@ -78,9 +78,9 @@ try {
     [void](Save-Delivery -Context $admin -Case $case -SourceId S03 -ExpectedVersion 0 -RequestId (Request) -Status Draft -Documents @($doc))
     Check ((Get-CaseStatus $user $case).deliveryStatusLabel -eq '대기 중') 'Draft AI delivery should wait.'
     [void](Save-Delivery -Context $admin -Case $case -SourceId S03 -ExpectedVersion 1 -RequestId (Request) -Status Published -NoResults $true -NoResultsReason '검색 완료, 적합 문헌 없음')
-    Check ((Get-CaseStatus $user $case).deliveryStatusLabel -eq '납품 완료') 'Completed no-results delivery must count as delivered.'
+    Check ((Get-CaseStatus $user $case).deliveryStatusLabel -eq '입력 완료') 'Completed no-results delivery must count as delivered.'
     [void](Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 1 -RequestId (Request) -Status Draft -Documents @($doc))
-    Check ((Get-CaseStatus $user $case).deliveryStatusLabel -eq '납품 완료') 'A new draft must not replace the published delivery state.'
+    Check ((Get-CaseStatus $user $case).deliveryStatusLabel -eq '입력 완료') 'A new draft must not replace the published delivery state.'
     $nextSettings=Get-Period $admin $next
     [void](Set-PeriodStatus $admin $next Closed $nextSettings.version (Request) '검증 마감')
     Reject {Save-TargetSelection $user $next 1 (Request) Draft @()} '마감'

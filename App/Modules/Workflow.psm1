@@ -313,7 +313,7 @@ function Get-WCase {
     $envelope = Read-Revision -Path $path
     if ($null -eq $envelope) { throw '제출 건을 찾을 수 없습니다.' }
     $actual = Convert-WRecord $envelope $path
-    if (-not (Test-WSelectionPublished $Context $actual)) { throw '아직 확정되지 않은 대상건입니다.' }
+    if (-not (Test-WSelectionPublished $Context $actual)) { throw '아직 확정되지 않은 대상 건입니다.' }
     foreach ($name in @('caseId','period','groupId','userId')) {
         if ([string]$actual.$name -ne [string]$Case.$name) { throw '제출 건 참조정보가 일치하지 않습니다.' }
     }
@@ -352,7 +352,7 @@ function Assert-WDeliveryWrite {
     if ((Get-WValue $source 'type') -eq 'General') {
         if ((Test-WRole $user 'examiner') -and $Case.userId -eq $user.userId) { return $user }
     } elseif ((Test-WRole $user 'ai') -and @(Get-WAssignedSources $Period $user.userId $Case.groupId) -contains $SourceId) { return $user }
-    throw '이 조사 방식의 납품자료를 작성할 권한이 없습니다.'
+    throw '이 조사 방식의 검색 결과를 작성할 권한이 없습니다.'
 }
 
 function Get-Cases {
@@ -464,23 +464,23 @@ function Save-TargetSelection {
         $oldRequest = @(Get-Revisions -Path $path | Where-Object {$_.requestId -eq $RequestId}) | Select-Object -First 1
         if ($oldRequest) { Assert-WRequest $oldRequest $fingerprint $user.userId; return Convert-WRecord $oldRequest $path }
         $currentVersion = if ($previous) {[int]$previous.version} else {0}
-        if ($currentVersion -ne $ExpectedVersion) { throw '다른 창에서 대상건이 변경되었습니다. 새로 고침 후 다시 확인하십시오.' }
-        if ($previous -and $previous.data.status -eq 'Confirmed') { throw '이미 대상건이 확정된 운영월입니다.' }
+        if ($currentVersion -ne $ExpectedVersion) { throw '다른 창에서 대상 건이 변경되었습니다. 새로 고침 후 다시 확인하십시오.' }
+        if ($previous -and $previous.data.status -eq 'Confirmed') { throw '이미 대상 건이 확정된 운영월입니다.' }
         $settings = Get-Period $Context $Period
         Assert-WOpen $settings Submission
         $member = Get-WMember $settings $user.userId
         if (-not $member) { throw '해당 월 참여 심사관이 아닙니다.' }
         $existing = @(Get-Cases $Context $Period Mine | Where-Object {$_.status -ne 'Cancelled'})
-        if ($existing.Count) { throw '이미 대상건이 확정된 운영월입니다.' }
+        if ($existing.Count) { throw '이미 대상 건이 확정된 운영월입니다.' }
         $caseIds = @()
         if ($Status -eq 'Confirmed') {
-            if (-not $clean.Count) { throw '확정할 대상건을 한 건 이상 입력하십시오.' }
+            if (-not $clean.Count) { throw '확정할 대상 건을 한 건 이상 입력하십시오.' }
             $limit = [int](Get-WValue $settings 'submissionLimit' 0)
             if ($limit -gt 0 -and $clean.Count -gt $limit) { throw '월별 제출 건수 상한을 초과했습니다.' }
             $seen = @{}
             foreach ($row in $clean) {
                 $row.applicationNumber = Convert-WApplicationNumber $row.applicationNumber
-                if ($seen.ContainsKey($row.applicationNumber)) { throw '대상건 목록에 중복된 출원번호가 있습니다.' }
+                if ($seen.ContainsKey($row.applicationNumber)) { throw '대상 건 목록에 중복된 출원번호가 있습니다.' }
                 $seen[$row.applicationNumber] = $true
             }
             $index = 0
@@ -536,7 +536,7 @@ function New-Submission {
                 }
             }
         }
-        if (Read-Revision -Path (Get-WSelectionPath $Context $Period $user.userId)) { throw '월별 대상건 선정 화면에서 임시저장 또는 확정하십시오.' }
+        if (Read-Revision -Path (Get-WSelectionPath $Context $Period $user.userId)) { throw '월별 대상 건 선정 화면에서 임시저장 또는 확정하십시오.' }
         Assert-WOpen $settings 'Submission'
         if (@($existing | Where-Object { $_.applicationNumber -eq $number -and $_.status -ne 'Cancelled' }).Count -gt 0) { throw '본인이 해당 월에 이미 제출한 출원번호입니다.' }
         $limit = [int](Get-WValue $settings 'submissionLimit' 0)
@@ -651,7 +651,7 @@ function Resolve-DeliveryAttachment {
     if ([string]::IsNullOrWhiteSpace($relative) -or [System.IO.Path]::IsPathRooted($relative)) { throw '첨부파일 상대 경로가 올바르지 않습니다.' }
     $base = [System.IO.Path]::GetFullPath((Get-WAttachmentBase $Context $actual $SourceId)).TrimEnd('\') + '\'
     $full = [System.IO.Path]::GetFullPath((Join-Path $Context.root $relative))
-    if (-not $full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) { throw '첨부파일이 해당 납품의 저장 영역을 벗어났습니다.' }
+    if (-not $full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) { throw '첨부파일이 해당 검색 결과의 저장 영역을 벗어났습니다.' }
     if (-not [System.IO.File]::Exists($full)) { throw '첨부파일을 찾을 수 없습니다.' }
     return $full
 }
@@ -697,7 +697,7 @@ function Convert-WDocuments {
         $type = [string](Get-WValue $item 'type' (Get-WValue $item 'documentType' (Get-WValue $oldDocument 'type' 'Patent')))
         $identifier = [string](Get-WValue $item 'identifier' '')
         $title = [string](Get-WValue $item 'title' (Get-WValue $oldDocument 'title' ''))
-        if ([string]::IsNullOrWhiteSpace($identifier)) { throw '문헌 출원번호 또는 식별정보를 입력하십시오.' }
+        if ([string]::IsNullOrWhiteSpace($identifier)) { throw '선행기술 문헌 출원번호 또는 식별정보를 입력하십시오.' }
         $attachments = @()
         foreach ($attachment in @((Get-WValue $item 'attachments' @()))) {
             $null = Resolve-DeliveryAttachment $Context $Case $SourceId $attachment
@@ -726,15 +726,15 @@ function Save-Delivery {
         $oldRequest = @(Get-Revisions -Path $path | Where-Object { $_.requestId -eq $RequestId }) | Select-Object -First 1
         if ($oldRequest) { Assert-WRequest $oldRequest $fingerprint $user.userId; return $oldRequest }
         Assert-WOpen $settings 'Delivery'
-        if ($actual.status -eq 'Cancelled') { throw '취소된 제출 건의 납품자료를 수정할 수 없습니다.' }
+        if ($actual.status -eq 'Cancelled') { throw '취소된 제출 건의 검색 결과를 수정할 수 없습니다.' }
         $current = Read-Revision -Path $path
         $version = 0
         if ($null -ne $current) { $version = [int]$current.version }
-        if ($version -ne $ExpectedVersion) { throw '다른 창에서 납품자료가 변경되었습니다. 최신 내용을 다시 불러오십시오.' }
+        if ($version -ne $ExpectedVersion) { throw '다른 창에서 검색 결과가 변경되었습니다. 최신 내용을 다시 불러오십시오.' }
         $docs = @(Convert-WDocuments $Context $actual $SourceId $Documents $current)
         if ($NoResults -and $docs.Count -gt 0) { throw '결과 없음과 문헌 목록을 동시에 등록할 수 없습니다.' }
         if ($NoResults -and [string]::IsNullOrWhiteSpace($NoResultsReason)) { throw '결과 없음 사유를 입력하십시오.' }
-        if ($Status -eq 'Published' -and -not $NoResults -and $docs.Count -eq 0) { throw '저장할 문헌 출원번호를 한 건 이상 입력하십시오.' }
+        if ($Status -eq 'Published' -and -not $NoResults -and $docs.Count -eq 0) { throw '저장할 선행기술 문헌 출원번호를 한 건 이상 입력하십시오.' }
         $source = @(Get-WMasterRecords $Context.root 'Sources' | Where-Object { $_.sourceId -eq $SourceId }) | Select-Object -First 1
         $data = [pscustomobject]@{ caseId = $actual.caseId; period = $actual.period; groupId = $actual.groupId; userId = $actual.userId;
             sourceId = $SourceId; sourceName = $source.name; status = $Status; documents = @($docs); noResults = $NoResults; noResultsReason = $NoResultsReason;
@@ -792,7 +792,7 @@ function Convert-WRatings {
     foreach ($rating in @($Ratings)) {
         $sourceId = [string](Get-WValue $rating 'sourceId')
         $documentId = [string](Get-WValue $rating 'documentId')
-        if (-not $Published.ContainsKey($sourceId)) { throw '납품되지 않은 조사 방식의 문헌을 평가할 수 없습니다.' }
+        if (-not $Published.ContainsKey($sourceId)) { throw '검색 결과가 입력되지 않은 조사 방식의 문헌을 평가할 수 없습니다.' }
         $documents = @((Get-WValue $Published[$sourceId].data 'documents' @()))
         if (@($documents | Where-Object { $_.documentId -eq $documentId }).Count -ne 1) { throw '현재 검색 결과에 없는 문헌 평가입니다.' }
         $key = $sourceId + '/' + $documentId
@@ -831,8 +831,8 @@ function Convert-WRankings {
         }
         $hasDelivery = $Published.ContainsKey($sourceId)
         $noResults = $hasDelivery -and [bool](Get-WValue $Published[$sourceId].data 'noResults' $false)
-        if (-not $hasDelivery -and $status -ne 'NotDelivered') { throw '미납품 조사 방식은 NotDelivered 상태여야 합니다.' }
-        if ($hasDelivery -and -not $noResults -and $status -in @('NotDelivered','NoResults')) { throw '납품 상태와 품질 순위 상태가 일치하지 않습니다.' }
+        if (-not $hasDelivery -and $status -ne 'NotDelivered') { throw '검색 결과 입력 전인 조사 방식은 NotDelivered 상태여야 합니다.' }
+        if ($hasDelivery -and -not $noResults -and $status -in @('NotDelivered','NoResults')) { throw '검색 결과 입력 상태와 품질 순위 상태가 일치하지 않습니다.' }
         if ($noResults -and $status -notin @('NoResults','Excluded')) { throw '결과 없음 조사 방식에는 순위를 부여할 수 없습니다.' }
         $bySource[$sourceId] = [pscustomobject]@{ sourceId = $sourceId; rank = $rank; status = $status }
     }
@@ -884,10 +884,10 @@ function Save-Evaluation {
             $currentVersion = 0
             if ($latest) { $published[$sourceId] = $latest; $currentVersion = [int]$latest.version }
             $expected = [int](Get-WValue $DeliveryVersions $sourceId 0)
-            if ($currentVersion -ne $expected) { throw "$sourceId 납품자료가 변경되었습니다. 최신 납품자료를 확인한 뒤 평가하십시오." }
+            if ($currentVersion -ne $expected) { throw "$sourceId 검색 결과가 변경되었습니다. 최신 검색 결과를 확인한 뒤 평가하십시오." }
             $versions[$sourceId] = $currentVersion
         }
-        if ($published.Count -eq 0) { throw '평가할 납품자료가 없습니다.' }
+        if ($published.Count -eq 0) { throw '평가할 검색 결과가 없습니다.' }
         $ratings = @(Convert-WRatings $DocumentRatings $published)
         $ranks = @(Convert-WRankings $Rankings $sourceIds $published)
         $completeDocuments = $true
@@ -944,7 +944,7 @@ function Get-CaseStatus {
     if ($evaluation) { $evaluationState = 'Partial'; if ($evaluation.data.complete) { $evaluationState = 'Complete' }; if ($evaluation.needsReconfirmation) { $evaluationState = 'NeedsReconfirmation' } }
     $aiStates = @($states | Where-Object {$sourceMap.ContainsKey($_.sourceId) -and $sourceMap[$_.sourceId].type -eq 'AI'})
     $aiCompleted = @($aiStates | Where-Object {$_.publishedVersion -gt 0}).Count
-    $label = if ($aiStates.Count -gt 0 -and $aiCompleted -eq $aiStates.Count) {'납품 완료'} else {'대기 중'}
+    $label = if ($aiStates.Count -gt 0 -and $aiCompleted -eq $aiStates.Count) {'입력 완료'} else {'대기 중'}
     return [pscustomobject]@{ caseId = $actual.caseId; submissionStatus = $actual.status; deliveries = @($states); evaluationStatus = $evaluationState; deliveryStatusLabel=$label; aiCompleted=$aiCompleted; aiTotal=$aiStates.Count }
 }
 

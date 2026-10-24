@@ -22,10 +22,10 @@
     <ScrollViewer x:Name="StatsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
         <UniformGrid Columns="4" Margin="0,0,0,12">
-          <Border Style="{StaticResource MetricCard}"><StackPanel><TextBlock Text="참여 심사관 / 미선정" Style="{StaticResource MetricLabel}"/><TextBlock x:Name="StatsParticipantsText" Style="{StaticResource MetricValue}" Text="—"/></StackPanel></Border>
-          <Border Style="{StaticResource MetricCard}"><StackPanel><TextBlock Text="확정 출원" Style="{StaticResource MetricLabel}"/><TextBlock x:Name="StatsCasesText" Style="{StaticResource MetricValue}" Text="—"/></StackPanel></Border>
-          <Border Style="{StaticResource MetricCard}"><StackPanel><TextBlock Text="AI 납품 완료 / 전체" Style="{StaticResource MetricLabel}"/><TextBlock x:Name="StatsDeliveriesText" Style="{StaticResource MetricValue}" Text="—"/><TextBlock x:Name="StatsDeliveryRateText" Style="{StaticResource MetricLabel}"/></StackPanel></Border>
-          <Border Style="{StaticResource MetricCard}" Margin="0"><StackPanel><TextBlock Text="평가 완료 / 전체" Style="{StaticResource MetricLabel}"/><TextBlock x:Name="StatsEvaluationsText" Style="{StaticResource MetricValue}" Text="—"/><TextBlock x:Name="StatsEvaluationRateText" Style="{StaticResource MetricLabel}"/></StackPanel></Border>
+          <Border Style="{StaticResource MetricCard}"><StackPanel><TextBlock Text="참여 심사관 / 미선정" Style="{StaticResource MetricLabel}" TextWrapping="Wrap"/><TextBlock x:Name="StatsParticipantsText" Style="{StaticResource MetricValue}" Text="—"/></StackPanel></Border>
+          <Border Style="{StaticResource MetricCard}"><StackPanel><TextBlock Text="확정 출원" Style="{StaticResource MetricLabel}" TextWrapping="Wrap"/><TextBlock x:Name="StatsCasesText" Style="{StaticResource MetricValue}" Text="—"/></StackPanel></Border>
+          <Border Style="{StaticResource MetricCard}"><StackPanel><TextBlock Text="AI 결과 입력 완료 / 전체" Style="{StaticResource MetricLabel}" TextWrapping="Wrap"/><TextBlock x:Name="StatsDeliveriesText" Style="{StaticResource MetricValue}" Text="—"/><TextBlock x:Name="StatsDeliveryRateText" Style="{StaticResource MetricLabel}" TextWrapping="Wrap"/></StackPanel></Border>
+          <Border Style="{StaticResource MetricCard}" Margin="0"><StackPanel><TextBlock Text="평가 완료 / 전체" Style="{StaticResource MetricLabel}" TextWrapping="Wrap"/><TextBlock x:Name="StatsEvaluationsText" Style="{StaticResource MetricValue}" Text="—"/><TextBlock x:Name="StatsEvaluationRateText" Style="{StaticResource MetricLabel}" TextWrapping="Wrap"/></StackPanel></Border>
         </UniformGrid>
         <Border Background="#FFF8E8" Padding="12" CornerRadius="5" Margin="0,0,0,12"><TextBlock x:Name="StatsPendingText" Foreground="#805B15" TextWrapping="Wrap"/></Border>
         <TextBlock x:Name="StatsAccountText" Foreground="#52647C" TextWrapping="Wrap" Margin="0,0,0,12"/>
@@ -34,19 +34,19 @@
             <DataGrid x:Name="StatsGroupsGrid" Style="{StaticResource StatsGrid}"><DataGrid.Columns>
               <DataGridTextColumn Header="그룹" Binding="{Binding groupName}" Width="*" MinWidth="130"/>
               <DataGridTextColumn Header="참여" Binding="{Binding participantCount}" Width="65"/><DataGridTextColumn Header="미선정" Binding="{Binding unselectedCount}" Width="75"/>
-              <DataGridTextColumn Header="출원" Binding="{Binding caseCount}" Width="65"/><DataGridTextColumn Header="AI 납품 완료" Binding="{Binding deliveredCount}" Width="105"/>
-              <DataGridTextColumn Header="납품 대기" Binding="{Binding waitingCount}" Width="90"/><DataGridTextColumn Header="평가 완료" Binding="{Binding completeCount}" Width="90"/>
+              <DataGridTextColumn Header="출원" Binding="{Binding caseCount}" Width="65"/><DataGridTextColumn Header="결과 입력 완료" Binding="{Binding deliveredCount}" Width="120"/>
+              <DataGridTextColumn Header="입력 대기" Binding="{Binding waitingCount}" Width="90"/><DataGridTextColumn Header="평가 완료" Binding="{Binding completeCount}" Width="90"/>
               <DataGridTextColumn Header="평가 중" Binding="{Binding partialCount}" Width="80"/><DataGridTextColumn Header="미평가" Binding="{Binding unreviewedCount}" Width="75"/>
               <DataGridTextColumn Header="재확인" Binding="{Binding staleCount}" Width="75"/><DataGridTextColumn Header="평가 완료율" Binding="{Binding evaluationRate}" Width="105"/>
             </DataGrid.Columns></DataGrid>
           </StackPanel></TabItem>
-          <TabItem Header="계정별 현황"><StackPanel Margin="12"><TextBlock Text="계정을 클릭하면 본인 출원 목록을 표시합니다. 담당 납품은 AI 담당 업무의 완료 / 대상 건수입니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,10"/>
+          <TabItem Header="계정별 현황"><StackPanel Margin="12"><TextBlock Text="계정을 클릭하면 본인 출원 목록을 표시합니다. 담당 결과 입력은 AI 담당 업무의 완료 / 대상 건수입니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,10"/>
             <DataGrid x:Name="StatsAccountsGrid" Style="{StaticResource StatsGrid}"><DataGrid.Columns>
               <DataGridTextColumn Header="심사과" Binding="{Binding division}" Width="125"/><DataGridTextColumn Header="이름" Binding="{Binding name}" Width="125"/>
-              <DataGridTextColumn Header="계정" Binding="{Binding activeLabel}" Width="70"/><DataGridTextColumn Header="대상건 선정" Binding="{Binding selectionStatus}" Width="105"/>
-              <DataGridTextColumn Header="본인 출원" Binding="{Binding caseCount}" Width="90"/><DataGridTextColumn Header="납품 대기" Binding="{Binding waitingCount}" Width="90"/>
+              <DataGridTextColumn Header="계정" Binding="{Binding activeLabel}" Width="70"/><DataGridTextColumn Header="대상 건 선정" Binding="{Binding selectionStatus}" Width="105"/>
+              <DataGridTextColumn Header="본인 출원" Binding="{Binding caseCount}" Width="90"/><DataGridTextColumn Header="입력 대기" Binding="{Binding waitingCount}" Width="90"/>
               <DataGridTextColumn Header="평가 완료" Binding="{Binding completeCount}" Width="90"/><DataGridTextColumn Header="평가 남음" Binding="{Binding pendingCount}" Width="90"/>
-              <DataGridTextColumn Header="재확인" Binding="{Binding staleCount}" Width="75"/><DataGridTextColumn Header="담당 납품" Binding="{Binding aiWork}" Width="100"/>
+              <DataGridTextColumn Header="재확인" Binding="{Binding staleCount}" Width="75"/><DataGridTextColumn Header="담당 결과 입력" Binding="{Binding aiWork}" Width="130"/>
               <DataGridTextColumn Header="그룹" Binding="{Binding groupName}" Width="150"/><DataGridTextColumn Header="역할" Binding="{Binding roles}" Width="150"/>
             </DataGrid.Columns></DataGrid>
           </StackPanel></TabItem>
@@ -54,14 +54,14 @@
             <DataGrid x:Name="StatsCasesGrid" Style="{StaticResource StatsGrid}"><DataGrid.Columns>
               <DataGridTextColumn Header="출원번호" Binding="{Binding applicationNumber}" Width="160"/><DataGridTextColumn Header="CPC" Binding="{Binding cpc}" Width="130"/>
               <DataGridTextColumn Header="심사관" Binding="{Binding examiner}" Width="125"/><DataGridTextColumn Header="그룹" Binding="{Binding groupName}" Width="130"/>
-              <DataGridTextColumn Header="AI 납품" Binding="{Binding deliveryStatus}" Width="110"/><DataGridTextColumn Header="납품 방식" Binding="{Binding aiProgress}" Width="90"/>
+              <DataGridTextColumn Header="AI 결과 입력" Binding="{Binding deliveryStatus}" Width="110"/><DataGridTextColumn Header="입력된 방식" Binding="{Binding aiProgress}" Width="90"/>
               <DataGridTextColumn Header="평가" Binding="{Binding evaluationStatus}" Width="120"/><DataGridTextColumn Header="문헌 수" Binding="{Binding documentCount}" Width="80"/>
             </DataGrid.Columns></DataGrid>
           </StackPanel></TabItem>
-          <TabItem Header="조사 방식별 통계"><StackPanel Margin="12"><TextBlock Text="최신 납품과 일치하는 평가만 집계합니다. 평균은 점수 입력 문헌, 인용률은 O/X 선택 문헌을 분모로 합니다. 재확인 필요 건의 순위는 제외합니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,10"/>
+          <TabItem Header="조사 방식별 통계"><StackPanel Margin="12"><TextBlock Text="최신 검색 결과와 일치하는 평가만 집계합니다. 평균은 점수 입력 문헌, 인용률은 O/X 선택 문헌을 분모로 합니다. 재확인 필요 건의 순위는 제외합니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,10"/>
             <DataGrid x:Name="StatsSourcesGrid" Style="{StaticResource StatsGrid}"><DataGrid.Columns>
               <DataGridTextColumn Header="조사 방식" Binding="{Binding sourceName}" Width="*" MinWidth="140"/><DataGridTextColumn Header="대상" Binding="{Binding expectedCount}" Width="65"/>
-              <DataGridTextColumn Header="납품 완료" Binding="{Binding publishedCount}" Width="90"/><DataGridTextColumn Header="납품 대기" Binding="{Binding pendingCount}" Width="90"/>
+              <DataGridTextColumn Header="입력 완료" Binding="{Binding publishedCount}" Width="90"/><DataGridTextColumn Header="입력 대기" Binding="{Binding pendingCount}" Width="90"/>
               <DataGridTextColumn Header="문헌" Binding="{Binding documentCount}" Width="65"/><DataGridTextColumn Header="점수 입력" Binding="{Binding scoreCount}" Width="90"/>
               <DataGridTextColumn Header="평균 점수" Binding="{Binding averageScore}" Width="90"/><DataGridTextColumn Header="인용 O" Binding="{Binding citedCount}" Width="75"/>
               <DataGridTextColumn Header="O/X 입력" Binding="{Binding citationCount}" Width="90"/><DataGridTextColumn Header="인용률" Binding="{Binding citationRate}" Width="80"/>
@@ -69,7 +69,7 @@
             </DataGrid.Columns></DataGrid>
           </StackPanel></TabItem>
         </TabControl>
-        <TextBlock Text="미선정에는 임시저장 중인 참여자도 포함됩니다. AI 납품 완료는 해당 월 AI 방식이 모두 납품된 출원이며, 평가 완료는 선행기술조사를 포함한 모든 비교 방식의 평가가 완료된 출원입니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,12,0,0"/>
+        <TextBlock Text="미선정에는 임시저장 중인 참여자도 포함됩니다. AI 결과 입력 완료는 해당 월 AI 검색 결과가 모두 입력된 출원이며, 평가 완료는 선행기술조사를 포함한 모든 비교 방식의 평가가 완료된 출원입니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,12,0,0"/>
       </StackPanel>
     </ScrollViewer>
   </DockPanel>

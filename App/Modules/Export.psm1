@@ -408,14 +408,14 @@ function Export-ReviewSnapshot {
             $ratingRows.Add([pscustomobject][ordered]@{
                 period = $Period; groupId = $case.groupId; examiner = $case.examinerName; examinerBureau = $examinerBureau; examinerDivision = $examinerDivision; applicationNumber = [string]$case.applicationNumber; cpc = $cpc; caseId = $case.caseId
                 sourceId = $sourceId; sourceName = $sourceId; deliveryVersion = $null; evaluatedVersion = Get-ExportProperty $evaluatedVersions $sourceId; documentId = $documentId
-                identifier = '현재 납품에 없는 문헌'; score = Get-ExportProperty $rating 'score'; cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' })
+                identifier = '현재 검색 결과에 없는 문헌'; score = Get-ExportProperty $rating 'score'; cited = $(if ($null -eq $cited) { '' } elseif ([bool]$cited) { 'O' } else { 'X' })
                 note = Get-ExportProperty $rating 'note'; needsReconfirmation = '필요'
             })
         }
     }
     $common = [ordered]@{ period = '운영월'; groupId = '그룹 ID'; examiner = '심사관'; examinerBureau = '심사국'; examinerDivision = '심사과'; applicationNumber = '출원번호'; cpc = 'CPC'; caseId = '업무 건 ID' }
     $caseColumns = [ordered]@{}; foreach ($key in $common.Keys) { $caseColumns[$key] = $common[$key] }
-    $caseColumns['status'] = '제출 상태'; $caseColumns['submittedAt'] = '제출 시각'; $caseColumns['duplicateWarning'] = '다른 심사관 중복 제출'; $caseColumns['publishedSources'] = '납품 방식 수'; $caseColumns['documentCount'] = '납품 문헌 수'; $caseColumns['evaluationStatus'] = '평가 상태'
+    $caseColumns['status'] = '제출 상태'; $caseColumns['submittedAt'] = '제출 시각'; $caseColumns['duplicateWarning'] = '다른 심사관 중복 제출'; $caseColumns['publishedSources'] = '입력된 방식 수'; $caseColumns['documentCount'] = '선행기술 문헌 수'; $caseColumns['evaluationStatus'] = '평가 상태'
     $documentColumns = [ordered]@{}; foreach ($key in $common.Keys) { $documentColumns[$key] = $common[$key] }
     $documentColumns['sourceId'] = '조사 방식 ID'; $documentColumns['sourceName'] = '조사 방식'; $documentColumns['documentId'] = '문헌 ID'; $documentColumns['type'] = '문헌 유형'; $documentColumns['identifier'] = '문헌 식별정보'; $documentColumns['title'] = '명칭'; $documentColumns['description'] = '관련 설명'; $documentColumns['attachments'] = '첨부파일'
     $rankingColumns = [ordered]@{}; foreach ($key in $common.Keys) { $rankingColumns[$key] = $common[$key] }

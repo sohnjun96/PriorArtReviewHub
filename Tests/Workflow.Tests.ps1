@@ -216,7 +216,7 @@ try {
         Assert-True ($s02v3.data.documents[0].documentId -eq $s02.data.documents[0].documentId) 'document identity remains stable'
         $old=Get-Evaluation $examiner $case
         Assert-True ($old.needsReconfirmation -and $old.staleSourceIds -contains 'S02') 'stale publication detected'
-        Assert-Throws {Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 1 -RequestId (New-Request) -DeliveryVersions $versions -DocumentRatings $ratings -Rankings $ranks} '납품자료가 변경'
+        Assert-Throws {Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 1 -RequestId (New-Request) -DeliveryVersions $versions -DocumentRatings $ratings -Rankings $ranks} '검색 결과가 변경'
         $again=Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 0 -RequestId $evaluationRequest -DeliveryVersions $versions -DocumentRatings $ratings -Rankings $ranks
         Assert-True ($again.version -eq 1) 'idempotent old evaluation returns its original revision'
         $changedRatings=@($ratings | ForEach-Object {$_ | Select-Object *})

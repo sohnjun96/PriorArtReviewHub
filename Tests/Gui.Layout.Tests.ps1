@@ -46,16 +46,16 @@ try {
     $controls.AdminContentHost.Content=$adminView
     $controls.IdentityText.Text='심사관 · 심사국 / 심사과'
     $controls.CaseTitle.Text='10-2026-0000123'
-    $controls.CaseSubtitle.Text='선행기술조사 · ChatGPT · 클로드 납품 완료'
+    $controls.CaseSubtitle.Text='선행기술조사 · ChatGPT · 클로드 입력 완료'
     $controls.WorkflowHintText.Text='AI 검색 결과 평가 · 왼쪽 출원을 선택하면 바로 평가할 수 있습니다.'
-    $controls.EvaluationStateText.Text='선행기술조사와 AI 결과 묶음을 비교해 순위를 선택하세요. 대기 중인 방식은 납품 후 평가할 수 있습니다.'
+    $controls.EvaluationStateText.Text='선행기술조사와 AI 검색 결과를 비교해 순위를 선택하세요. 대기 중인 방식은 검색 결과가 입력되면 평가할 수 있습니다.'
     $rankRows=@(foreach ($name in @('선행기술조사','ChatGPT','클로드')) {[pscustomobject]@{sourceName=$name;choice='1';notDelivered=$false;noResults=$false}})
     $ratingRows=@(foreach ($source in @('선행기술조사','ChatGPT','클로드')) {foreach ($index in 1..7) {[pscustomobject]@{sourceName=$source;identifier=('10-2025-{0:0000000}' -f $index);scoreText='';citedText='';note=''}}})
     $controls.RankGrid.ItemsSource=$rankRows
     $controls.RatingsGrid.ItemsSource=$ratingRows
     $controls.PublishedGrid.ItemsSource=$ratingRows
     $controls.DocumentsGrid.ItemsSource=@($ratingRows | Select-Object -First 7)
-    $controls.CasesGrid.ItemsSource=@(1..10 | ForEach-Object {[pscustomobject]@{applicationNumber=('10-2026-{0:0000000}' -f $_);cpc='G06F 16/00';examinerName='심사관';statusLabel='납품 완료'}})
+    $controls.CasesGrid.ItemsSource=@(1..10 | ForEach-Object {[pscustomobject]@{applicationNumber=('10-2026-{0:0000000}' -f $_);cpc='G06F 16/00';examinerName='테스트 김가람';statusLabel='입력 완료'}})
     $controls.SubmissionRowsGrid.ItemsSource=$controls.CasesGrid.ItemsSource
     foreach ($name in @('RankGrid','RatingsGrid','CasesGrid','DocumentsGrid','PublishedGrid','SubmissionRowsGrid')) {Enable-ReadableListScroll $controls[$name]}
     $window.ShowActivated=$false;$window.ShowInTaskbar=$false
@@ -104,7 +104,11 @@ try {
     $handled=Send-ListWheel $controls.RatingsGrid 120
     Assert-Layout ($handled -and $controls.EvaluationScroll.VerticalOffset -lt $previousOffset) 'Nested ratings list traps upward wheel input.'
 
+    $window.FindName('CaseSidebarColumn').MinWidth=375
+    $window.FindName('CaseSidebarColumn').Width=390
     $controls.MainTabs.SelectedItem=$controls.DeliveryTab;Update-LayoutTest
+    $columnWidth=($controls.CasesGrid.Columns | Measure-Object ActualWidth -Sum).Sum
+    Assert-Layout ($controls.CasesGrid.Columns[1].ActualWidth -ge 100 -and $columnWidth -le $controls.CasesGrid.ActualWidth) "AI case list clips examiner names or the status column: examiner=$($controls.CasesGrid.Columns[1].ActualWidth), columns=$columnWidth, grid=$($controls.CasesGrid.ActualWidth)."
     Assert-Layout ($controls.DocumentsGrid.ActualHeight -ge 250) 'AI input list collapsed.'
     Assert-ButtonVisible $controls.PublishButton
     $controls.DeliveryScroll.ScrollToBottom();Update-LayoutTest
@@ -153,7 +157,7 @@ try {
     $window.FindName('CaseHeaderPanel').Visibility='Collapsed';$window.FindName('CaseHeaderRow').Height=0
     $statsView.FindName('StatsScopeText').Text='2026-10 · 운영 중 · 전체 그룹 · 전체 계정'
     $statsView.FindName('StatsUpdatedText').Text='집계 2026-10-24 15:00:00 · 취소 출원 제외 · 최신 상태는 상단 새로 고침'
-    $statsView.FindName('StatsPendingText').Text='미선정 3명 · 납품 대기 12건 · 미평가 8건 · 평가 중 2건 · 재확인 필요 1건'
+    $statsView.FindName('StatsPendingText').Text='미선정 3명 · 입력 대기 12건 · 미평가 8건 · 평가 중 2건 · 재확인 필요 1건'
     $statsScroll=$statsView.FindName('StatsScroll')
     foreach ($size in @(@(1480,940),@(1366,728),@(1100,640))) {
         $window.Width=$size[0];$window.Height=$size[1]

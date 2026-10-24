@@ -65,7 +65,7 @@ function Show-StatisticsFilter {
         $ui.StatsParticipantsText.Text="$($summary.participantCount) / $($summary.unselectedCount)";$ui.StatsCasesText.Text=[string]$summary.caseCount
         $ui.StatsDeliveriesText.Text="$($summary.deliveredCount) / $($summary.caseCount)";$ui.StatsDeliveryRateText.Text=$summary.deliveryRate
         $ui.StatsEvaluationsText.Text="$($summary.completeCount) / $($summary.caseCount)";$ui.StatsEvaluationRateText.Text=$summary.evaluationRate
-        $ui.StatsPendingText.Text="미선정 $($summary.unselectedCount)명  ·  납품 대기 $($summary.waitingCount)건  ·  미평가 $($summary.unreviewedCount)건  ·  평가 중 $($summary.partialCount)건  ·  재확인 필요 $($summary.staleCount)건"
+        $ui.StatsPendingText.Text="미선정 $($summary.unselectedCount)명  ·  입력 대기 $($summary.waitingCount)건  ·  미평가 $($summary.unreviewedCount)건  ·  평가 중 $($summary.partialCount)건  ·  재확인 필요 $($summary.staleCount)건"
         $state=if ($script:statisticsSnapshot.periodStatus -eq 'Closed') {'마감'} else {'운영 중'}
         $ui.StatsScopeText.Text="$($script:statisticsSnapshot.period) · $state · $($ui.StatsGroupCombo.SelectedItem.name) · $($ui.StatsUserCombo.SelectedItem.label)"
         $ui.StatsAccountText.Text=if ($user -and $view.accounts.Count) {"$($view.accounts[0].name) · $($view.accounts[0].roles) · $($view.accounts[0].activeLabel) · AI 배정: $($view.accounts[0].assignments)"} else {"조회 계정 $($summary.accountCount)명 · 계정별 현황에는 미참여·비활성 계정도 표시됩니다."}
@@ -79,13 +79,13 @@ function Export-StatisticsView([string]$OutputDirectory='') {
     $path=Join-Path $folder ('통계-'+$script:statisticsSnapshot.period+'-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[guid]::NewGuid().ToString('N').Substring(0,6)+'.xlsx')
     $view=$script:statisticsFilter
     $columns=[ordered]@{
-        '그룹별 통계'=[ordered]@{groupName='그룹';participantCount='참여 심사관';unselectedCount='미선정';caseCount='출원';deliveredCount='AI 납품 완료';waitingCount='납품 대기';completeCount='평가 완료';partialCount='평가 중';unreviewedCount='미평가';staleCount='재확인';evaluationRate='평가 완료율'}
-        '계정별 현황'=[ordered]@{name='이름';bureau='심사국';division='심사과';groupName='그룹';roles='역할';activeLabel='계정';selectionStatus='대상건 선정';caseCount='본인 출원';completeCount='평가 완료';pendingCount='평가 남음';staleCount='재확인';aiPublished='담당 납품 완료';aiAssigned='담당 납품 대상';assignments='AI 배정'}
-        '출원별 현황'=[ordered]@{applicationNumber='출원번호';cpc='CPC';examiner='심사관';groupName='그룹';deliveryStatus='AI 납품';aiProgress='납품 방식';evaluationStatus='평가';documentCount='문헌 수'}
-        '조사 방식별 통계'=[ordered]@{sourceName='조사 방식';expectedCount='대상';publishedCount='납품 완료';pendingCount='납품 대기';documentCount='문헌 수';scoreCount='점수 입력 문헌';averageScore='평균 점수';citedCount='인용 O';citationCount='O/X 입력 문헌';citationRate='인용률';firstCount='1위 횟수'}
+        '그룹별 통계'=[ordered]@{groupName='그룹';participantCount='참여 심사관';unselectedCount='미선정';caseCount='출원';deliveredCount='AI 결과 입력 완료';waitingCount='입력 대기';completeCount='평가 완료';partialCount='평가 중';unreviewedCount='미평가';staleCount='재확인';evaluationRate='평가 완료율'}
+        '계정별 현황'=[ordered]@{name='이름';bureau='심사국';division='심사과';groupName='그룹';roles='역할';activeLabel='계정';selectionStatus='대상 건 선정';caseCount='본인 출원';completeCount='평가 완료';pendingCount='평가 남음';staleCount='재확인';aiPublished='담당 입력 완료';aiAssigned='담당 결과 입력 대상';assignments='AI 배정'}
+        '출원별 현황'=[ordered]@{applicationNumber='출원번호';cpc='CPC';examiner='심사관';groupName='그룹';deliveryStatus='AI 결과 입력';aiProgress='입력된 방식';evaluationStatus='평가';documentCount='문헌 수'}
+        '조사 방식별 통계'=[ordered]@{sourceName='조사 방식';expectedCount='대상';publishedCount='입력 완료';pendingCount='입력 대기';documentCount='문헌 수';scoreCount='점수 입력 문헌';averageScore='평균 점수';citedCount='인용 O';citationCount='O/X 입력 문헌';citationRate='인용률';firstCount='1위 횟수'}
         '조회 기준'=[ordered]@{scope='조회 범위';capturedAt='집계 시각';rule='집계 기준'}
     }
-    $sheets=[ordered]@{'그룹별 통계'=@($view.groups);'계정별 현황'=@($view.accounts);'출원별 현황'=@($view.cases);'조사 방식별 통계'=@($view.sources);'조회 기준'=@([pscustomobject]@{scope=$ui.StatsScopeText.Text;capturedAt=$script:statisticsSnapshot.capturedAt;rule='취소·선정 초안 제외. 점수·인용은 최신 납품과 일치하는 입력값만, 순위는 재확인 불필요한 평가만 집계.'})}
+    $sheets=[ordered]@{'그룹별 통계'=@($view.groups);'계정별 현황'=@($view.accounts);'출원별 현황'=@($view.cases);'조사 방식별 통계'=@($view.sources);'조회 기준'=@([pscustomobject]@{scope=$ui.StatsScopeText.Text;capturedAt=$script:statisticsSnapshot.capturedAt;rule='취소·선정 초안 제외. 점수·인용은 최신 검색 결과와 일치하는 입력값만, 순위는 재확인 불필요한 평가만 집계.'})}
     Invoke-UiWork -Work {param($path,$sheets,$columns) Export-Workbook -Path $path -Sheets $sheets -Columns $columns;return $path} -Arguments @($path,$sheets,$columns) -Completed {
         param($result)
         $script:statisticsExportPath=$result[-1]

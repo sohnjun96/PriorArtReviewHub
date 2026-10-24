@@ -3,7 +3,7 @@ function Get-WStatisticsSummary {
     param([object[]]$Cases=@(),[object[]]$Accounts=@())
     $participants=@($Accounts | Where-Object {$_.participating})
     $complete=@($Cases | Where-Object {$_.evaluationStatus -eq '평가 완료'}).Count
-    $delivered=@($Cases | Where-Object {$_.deliveryStatus -eq '납품 완료'}).Count
+    $delivered=@($Cases | Where-Object {$_.deliveryStatus -eq '입력 완료'}).Count
     [pscustomobject]@{
         accountCount=$Accounts.Count;participantCount=$participants.Count
         unselectedCount=@($participants | Where-Object {$_.selectionStatus -in @('미선정','임시저장')}).Count
@@ -82,7 +82,7 @@ function Get-AdminStatistics {
                 groupName=(Get-WValue $groupMap[$actual.groupId] 'name' $actual.groupId)
                 examiner=$actual.examinerName;division=(Get-WValue $actual 'examinerDivision');applicationNumber=$actual.applicationNumber;cpc=(Get-WValue $actual 'cpc')
                 aiTotal=$aiTotal;aiCompleted=$aiCompleted;aiProgress="$aiCompleted / $aiTotal";documentCount=$documents
-                deliveryStatus=$(if (-not $aiTotal) {'AI 대상 없음'} elseif ($aiCompleted -eq $aiTotal) {'납품 완료'} else {'대기 중'})
+                deliveryStatus=$(if (-not $aiTotal) {'AI 대상 없음'} elseif ($aiCompleted -eq $aiTotal) {'입력 완료'} else {'대기 중'})
                 evaluationStatus=$evaluationStatus
             })
         }

@@ -115,7 +115,7 @@ try {
     $mainNames = @($window.FindName('MainTabs').Items | ForEach-Object { $_.Name })
     if (($mainNames -join '|') -cne 'PersonalWorkTab|DeliveryTab|StatisticsTab|AdminTab') { throw 'The role workspaces must remain independent top-level tabs.' }
     $personalTabs = $window.FindName('PersonalTabs')
-    if ($null -eq $personalTabs -or (($personalTabs.Items | ForEach-Object { $_.Header }) -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가') { throw 'Target selection and result evaluation must be separate examiner steps.' }
+    if ($null -eq $personalTabs -or (($personalTabs.Items | ForEach-Object { $_.Header }) -join '|') -cne '1. 대상 건 선정|2. AI 검색 결과 평가') { throw 'Target selection and result evaluation must be separate examiner steps.' }
     if ((($personalTabs.Items | ForEach-Object { $_.Name }) -join '|') -cne 'TargetSelectionTab|EvaluationTab') { throw 'The personal workspace must expose separate selection and evaluation tabs.' }
     if ($null -ne $window.FindName('TargetTabs') -or $null -ne $window.FindName('GoDeliveryButton')) { throw 'Target selection must not contain a mixed delivery lookup tab or a shortcut into assigned AI work.' }
     $evaluationTabs = $window.FindName('EvaluationTabs')

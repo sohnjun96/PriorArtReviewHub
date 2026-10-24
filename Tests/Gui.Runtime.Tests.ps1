@@ -53,7 +53,7 @@ try {
     if ($taskAdminSession.launchMode -ne 'Admin' -or $taskAdminSession.accessMode -ne 'Admin' -or -not $taskAdminSession.adminVisible -or $taskAdminSession.loginDialogShown) {throw '관리자용 실행이 사용자 선택 없이 관리자 화면으로 진입하지 않았습니다.'}
     if (($taskAdminSession.visibleMenus -join '|') -cne '내 심사 업무|AI 담당 업무|통계·현황|운영 관리' -or -not $taskAdminSession.deliveryVisible) {throw '관리자 실행의 개인·AI·운영 업무 구분이 적용되지 않았습니다.'}
     if (-not $taskAdminSession.statisticsVisible -or -not $taskAdminSession.statisticsLandingVerified) {throw '관리자 실행의 첫 화면에 통계가 표시되지 않았습니다.'}
-    if (($taskAdminSession.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가') {throw '심사 업무의 대상건 선정과 결과 평가 단계가 분리되지 않았습니다.'}
+    if (($taskAdminSession.personalSteps -join '|') -cne '1. 대상 건 선정|2. AI 검색 결과 평가') {throw '심사 업무의 대상 건 선정과 결과 평가 단계가 분리되지 않았습니다.'}
     if (-not $taskAdminSession.dropdownBindingsVerified) {throw '평가 드롭다운을 선택한 값이 실제 평가 행에 즉시 반영되지 않았습니다.'}
     if (-not $taskAdminSession.singleClickEditingVerified) {throw '문헌번호 셀을 한 번 클릭해 바로 수정할 수 없습니다.'}
     if (-not $taskAdminSession.automaticDeliveryRefreshVerified) {throw 'AI 검색 결과를 저장한 후 선택 출원의 결과·평가 화면이 자동으로 갱신되지 않았습니다.'}
@@ -120,13 +120,13 @@ foreach ($taskFlow in @('Draft','Confirm')) {
     $taskProcessInfo.Arguments=('-NoLogo -NoProfile -STA -ExecutionPolicy RemoteSigned -File "{0}" -Demo -DataRoot "{1}" -SmokeTest -SmokeLoginUserId U002 -ExerciseTargetSelection {2} -SmokeReportPath "{3}" -ScreenshotPath "{4}"' -f $taskStart,$taskSelectionRoot,$taskFlow,$taskSelectionReport,$taskSelectionImage)
     $taskProcess=[Diagnostics.Process]::Start($taskProcessInfo)
     try {
-        if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw '대상건 임시저장·확정 화면 검증 시간이 초과되었습니다.'}
+        if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw '대상 건 임시저장·확정 화면 검증 시간이 초과되었습니다.'}
         if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
         $taskSelectionResult=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskSelectionReport))
-        if (-not $taskSelectionResult.selectionFlowVerified) {throw '대상건 임시저장 또는 재로그인 후 확정 흐름을 검증하지 못했습니다.'}
+        if (-not $taskSelectionResult.selectionFlowVerified) {throw '대상 건 임시저장 또는 재로그인 후 확정 흐름을 검증하지 못했습니다.'}
         $taskSavedSelection=Get-TargetSelection $taskSelectionUser $taskPeriod
         if ($taskFlow -eq 'Draft') {
-            if ($taskSavedSelection.status -ne 'Draft' -or $taskSelectionResult.sidebarVisible -or ($taskSelectionResult.visiblePersonalSteps -join '|') -ne '1. 대상건 선정' -or @(Get-Cases $taskSelectionAdmin $taskPeriod All).Count -ne 0) {throw '미확정 화면 또는 초안 비공개 동작이 올바르지 않습니다.'}
+            if ($taskSavedSelection.status -ne 'Draft' -or $taskSelectionResult.sidebarVisible -or ($taskSelectionResult.visiblePersonalSteps -join '|') -ne '1. 대상 건 선정' -or @(Get-Cases $taskSelectionAdmin $taskPeriod All).Count -ne 0) {throw '미확정 화면 또는 초안 비공개 동작이 올바르지 않습니다.'}
         } else {
             if ($taskSavedSelection.status -ne 'Confirmed' -or -not $taskSelectionResult.evaluationOpened -or $taskSelectionResult.ratingsHeight -le $taskSelectionResult.rankHeight -or ($taskSelectionResult.rankSourceIds -join '|') -ne 'S01|S02|S03') {throw '확정 뒤 평가 화면·전체 조사 방식·평가 영역 크기가 올바르지 않습니다.'}
         }
@@ -144,7 +144,7 @@ try {
     if (-not $taskProcess.WaitForExit(60000)) {$taskProcess.Kill();throw '확정 후 재로그인 검증 시간이 초과되었습니다.'}
     if ($taskProcess.ExitCode -ne 0) {throw ($taskProcess.StandardError.ReadToEnd()+$taskProcess.StandardOutput.ReadToEnd())}
     $taskSelectionResult=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskSelectionReport))
-    if (-not $taskSelectionResult.evaluationOpened -or ($taskSelectionResult.caseStatusLabels -join '|') -ne '납품 완료' -or ($taskSelectionResult.rankSourceIds -join '|') -ne 'S01|S02|S03') {throw '확정 후 재로그인 또는 AI 납품 완료 상태와 선행기술조사 행이 올바르지 않습니다.'}
+    if (-not $taskSelectionResult.evaluationOpened -or ($taskSelectionResult.caseStatusLabels -join '|') -ne '입력 완료' -or ($taskSelectionResult.rankSourceIds -join '|') -ne 'S01|S02|S03') {throw '확정 후 재로그인 또는 AI 결과 입력 완료 상태와 선행기술조사 행이 올바르지 않습니다.'}
     Write-Output 'PASS WPF confirmed re-login opens evaluation with completed AI status and undelivered general-search comparator'
 } finally {$taskProcess.Dispose()}
 
@@ -162,7 +162,7 @@ try {
     $taskReport=ConvertFrom-Json -InputObject ([IO.File]::ReadAllText($taskOtherReport))
     if ($taskReport.userId -ne 'U002' -or $taskReport.adminVisible -or $taskOtherCase.caseId -notin $taskReport.caseIds -or $taskCase.caseId -in $taskReport.caseIds -or $taskReport.launchMode -ne 'User' -or $taskReport.accessMode -ne 'User' -or -not $taskReport.loginDialogShown) {throw '일반사용자용 실행에서 본인 선택과 업무 범위가 적용되지 않았습니다.'}
     if ($taskReport.deliveryVisible -or ($taskReport.visibleMenus -join '|') -cne '내 심사 업무' -or $taskReport.workspaceScope -ne 'Mine' -or ($taskReport.scopeIds -join '|') -cne 'Mine') {throw '일반 심사관에게 AI 담당 업무가 보이거나 본인 외의 출원 범위가 노출되었습니다.'}
-    if (($taskReport.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가' -or -not $taskReport.evaluationOpened -or ($taskReport.visiblePersonalSteps -join '|') -cne '2. AI 검색 결과 평가') {throw '이미 제출한 운영월은 평가 화면으로 바로 진입해야 합니다.'}
+    if (($taskReport.personalSteps -join '|') -cne '1. 대상 건 선정|2. AI 검색 결과 평가' -or -not $taskReport.evaluationOpened -or ($taskReport.visiblePersonalSteps -join '|') -cne '2. AI 검색 결과 평가') {throw '이미 제출한 운영월은 평가 화면으로 바로 진입해야 합니다.'}
     Write-Output 'PASS WPF examiner mode: only personal workspace, own cases, separate selection/evaluation steps, no AI result entry'
 } finally {$taskProcess.Dispose()}
 
@@ -186,7 +186,7 @@ try {
     if ((@($taskReport.aiCaseIds | Sort-Object) -join '|') -cne ($taskExpectedAssignedIds -join '|') -or $taskOtherCase.caseId -notin $taskReport.aiCaseIds) {throw 'AI 담당 업무에서 배정 그룹의 다른 심사관 출원을 조회하지 못했습니다.'}
     if ((@($taskReport.personalCaseIds | Sort-Object) -join '|') -cne ($taskExpectedPersonalIds -join '|') -or $taskAiCase.caseId -notin $taskReport.personalCaseIds -or $taskOtherCase.caseId -in $taskReport.personalCaseIds -or (@($taskReport.caseIds | Sort-Object) -join '|') -cne ($taskExpectedPersonalIds -join '|')) {throw '개인 업무로 돌아온 뒤 본인 출원 외의 담당 그룹 출원이 남아 있습니다.'}
     if (($taskReport.aiSourceIds -join '|') -cne 'S03') {throw 'AI 담당 업무에서 배정되지 않은 AI 또는 일반 조사 방식이 노출되었습니다.'}
-    if (($taskReport.personalSteps -join '|') -cne '1. 대상건 선정|2. AI 검색 결과 평가' -or -not $taskReport.evaluationOpened -or ($taskReport.visiblePersonalSteps -join '|') -cne '2. AI 검색 결과 평가') {throw 'AI 담당자의 개인 대상건 선정과 결과 평가 단계가 섞였습니다.'}
+    if (($taskReport.personalSteps -join '|') -cne '1. 대상 건 선정|2. AI 검색 결과 평가' -or -not $taskReport.evaluationOpened -or ($taskReport.visiblePersonalSteps -join '|') -cne '2. AI 검색 결과 평가') {throw 'AI 담당자의 개인 대상 건 선정과 결과 평가 단계가 섞였습니다.'}
     Write-Output 'PASS WPF AI examiner mode: assigned group/source entry, independent personal selection/evaluation, own-case scope restored after workspace switch'
 } finally {$taskProcess.Dispose()}
 

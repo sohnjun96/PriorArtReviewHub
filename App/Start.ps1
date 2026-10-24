@@ -556,7 +556,7 @@ function Show-CaseDetail($Case) {
         $script:published=@($snapshot.deliveries); $script:evaluation=$snapshot.evaluation
         $editable=@($script:allSources | Where-Object {
             $source=$_
-            $source.sourceId -in $script:loadedPeriod.sourceIds -and (
+            $source.type -eq 'AI' -and $source.sourceId -in $script:loadedPeriod.sourceIds -and (
                 'admin' -in $context.User.roles -or
                 ($script:activeWorkspace -eq 'AI' -and $source.type -eq 'AI' -and 'ai' -in $context.User.roles -and @($script:loadedPeriod.assignments | Where-Object {$_.userId -eq $context.User.userId -and $_.groupId -eq $script:selectedCase.groupId -and $_.sourceId -eq $source.sourceId}).Count -gt 0)
             )
@@ -604,16 +604,21 @@ function Initialize-EvaluationRows {
             $script:ratings.Add([pscustomobject]@{sourceId=$delivery.data.sourceId;sourceName=$delivery.data.sourceName;documentId=$doc.documentId;identifier=$doc.identifier;title=$doc.title;scoreText=$score;citedText=$cited;note=$note})
         }
     }
-    # Show every comparison method, including the general prior-art search before it is delivered.
-    foreach ($source in @($script:allSources | Where-Object {$_.sourceId -in $script:loadedPeriod.sourceIds -or $_.type -eq 'General'})) {
+    # General prior-art search is a ranking-only comparator, with no delivery or document ratings.
+    foreach ($source in @($script:allSources | Where-Object {$_.sourceId -in $script:loadedPeriod.sourceIds -or ($_.type -eq 'General' -and $_.active)})) {
         if ($source.sourceId -notin @($script:ranks | ForEach-Object {$_.sourceId})) {
-            $script:ranks.Add([pscustomobject]@{sourceId=$source.sourceId;sourceName=$source.name;deliveryVersion=0;choice='대기 중';noResults=$false;notDelivered=$true})
+            $rankOnly=$source.type -eq 'General';$choice=if ($rankOnly) {''} else {'대기 중'}
+            if ($rankOnly -and $old) {
+                $prior=@($old.rankings | Where-Object {$_.sourceId -eq $source.sourceId}) | Select-Object -First 1
+                if ($prior) {switch ($prior.status) {'Ranked' {$choice=[string]$prior.rank};'Outside' {$choice='순위 외'};'Excluded' {$choice='평가 제외'};'Incomparable' {$choice='비교 불가'}}}
+            }
+            $script:ranks.Add([pscustomobject]@{sourceId=$source.sourceId;sourceName=$source.name;deliveryVersion=0;choice=$choice;noResults=$false;notDelivered=(-not $rankOnly)})
         }
     }
     $ordered=@($script:ranks | Sort-Object @{Expression={if ($_.sourceId -in @($script:allSources | Where-Object {$_.type -eq 'General'} | ForEach-Object {$_.sourceId})) {0} else {1}}},sourceId)
     $script:ranks.Clear();foreach ($rank in $ordered) {$script:ranks.Add($rank)}
     $ui.EvaluationSavedText.Text=if ($script:evaluation) {'저장된 평가'} else {'평가 저장 전'}
-    $ui.EvaluationStateText.Text=if ($stale) {'검색 결과가 수정되었습니다. 문헌 평가와 전체 순위를 확인한 뒤 저장하세요.'} elseif ($own) {'선행기술조사와 AI 검색 결과를 비교해 순위를 선택하세요. 대기 중인 방식은 검색 결과가 입력되면 평가할 수 있습니다.'} else {'본인 출원의 평가만 입력할 수 있습니다.'}
+    $ui.EvaluationStateText.Text=if ($stale) {'AI 검색 결과가 수정되었습니다. 문헌 평가와 전체 순위를 확인한 뒤 저장하세요.'} elseif ($own) {'선행기술조사는 결과 입력 없이 품질 순위만 비교합니다. 문헌별 평가는 입력된 AI 검색 결과에만 작성하세요.'} else {'본인 출원의 평가만 입력할 수 있습니다.'}
     $script:evalBaselineStamp=Get-EvaluationInputStamp
 }
 function Load-DeliveryEditor {
@@ -1063,7 +1068,9 @@ if ($SmokeTest) {
                         $changedBySelection=$script:evalDirty
                         $scoreCombo.SelectedValue='0';$citeCombo.SelectedValue='O';$citeCombo.SelectedValue='X'
                         $rankCombo=@(Find-VisualControls $ui.RankGrid ([Windows.Controls.ComboBox])) | Select-Object -First 1
-                        if (-not $rankCombo) {throw '실제 순위 드롭다운을 찾을 수 없습니다.'}
+                        if (-not $rankCombo -or $rankCombo.DataContext.sourceId -ne 'S01' -or -not $rankCombo.IsEnabled -or $rankCombo.DataContext.notDelivered) {throw '선행기술조사의 순위를 결과 입력 없이 선택할 수 없습니다.'}
+                        if (@($ui.SourceCombo.ItemsSource | Where-Object {$_.type -ne 'AI'}).Count -or @($script:ratings | Where-Object {$_.sourceId -eq 'S01'}).Count) {throw '선행기술조사가 AI 입력 또는 문헌 평가에 포함됐습니다.'}
+                        $script:rankOnlyComparisonVerified=$true
                         $priorRank=$rankCombo.SelectedValue;$rankCombo.SelectedValue='';$rankCombo.SelectedValue=$priorRank
                         $script:dropdownBindingsVerified=$scoreCombo.DataContext.scoreText -eq '0' -and $citeCombo.DataContext.citedText -eq 'X' -and $rankCombo.DataContext.choice -eq $priorRank -and $changedBySelection
                         if (-not $script:dropdownBindingsVerified) {throw '드롭다운 선택이 평가값과 수정상태에 반영되지 않았습니다.'}
@@ -1234,6 +1241,7 @@ if ($SmokeTest) {
                 caseScrollVerified=[bool]$script:caseScrollVerified
                 separateUserFlowsVerified=[bool]$script:separateUserFlowsVerified
                 adminRosterFlowVerified=[bool]$script:adminRosterFlowVerified
+                rankOnlyComparisonVerified=[bool]$script:rankOnlyComparisonVerified
                 statisticsVisible=($ui.StatisticsTab.Visibility -eq 'Visible');statisticsLandingVerified=[bool]$script:statisticsLandingVerified
                 statisticsFlowVerified=[bool]$script:statisticsFlowVerified;statisticsExportPath=$script:statisticsExportPath;statisticsExportCaseCount=$script:statsExportCaseCount
             }

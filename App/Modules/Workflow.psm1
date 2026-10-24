@@ -346,12 +346,11 @@ function Assert-WDeliveryWrite {
     $user = Assert-WContext $Context
     $source = @(Get-WMasterRecords $Context.root 'Sources' | Where-Object { $_.sourceId -eq $SourceId }) | Select-Object -First 1
     if ($null -eq $source -or (-not $ForRead -and -not [bool](Get-WValue $source 'active' $true))) { throw '활성 조사 방식이 아닙니다.' }
+    if ($source.type -eq 'General') { throw '선행기술조사는 품질 순위 비교 전용이며 검색 결과 입력 대상이 아닙니다.' }
     if (@((Get-WValue $Period 'sourceIds' @())) -notcontains $SourceId) { throw '이 운영월의 비교 조사 방식이 아닙니다.' }
     if (-not (Get-WMember $Period $Case.userId)) { throw '제출 심사관이 해당 월 참여자로 등록되어 있지 않습니다.' }
     if (Test-WRole $user 'admin') { return $user }
-    if ((Get-WValue $source 'type') -eq 'General') {
-        if ((Test-WRole $user 'examiner') -and $Case.userId -eq $user.userId) { return $user }
-    } elseif ((Test-WRole $user 'ai') -and @(Get-WAssignedSources $Period $user.userId $Case.groupId) -contains $SourceId) { return $user }
+    if ((Test-WRole $user 'ai') -and @(Get-WAssignedSources $Period $user.userId $Case.groupId) -contains $SourceId) { return $user }
     throw '이 조사 방식의 검색 결과를 작성할 권한이 없습니다.'
 }
 
@@ -613,7 +612,9 @@ function Get-Deliveries {
     $settings = Get-Period $Context $actual.period
     $isOwner = $actual.userId -eq $user.userId -and (Test-WRole $user 'examiner')
     $assigned = @(Get-WAssignedSources $settings $user.userId $actual.groupId)
+    $aiIds = @(Get-WMasterRecords $Context.root 'Sources' | Where-Object {$_.type -eq 'AI'} | ForEach-Object {$_.sourceId})
     foreach ($sourceId in @((Get-WValue $settings 'sourceIds' @()))) {
+        if ($sourceId -notin $aiIds) { continue }
         if (-not $isOwner -and -not (Test-WRole $user 'admin') -and $assigned -notcontains $sourceId) { continue }
         $published = Get-WPublished $Context $actual $sourceId
         if ($null -ne $published) { $published }
@@ -769,11 +770,20 @@ function Get-Evaluation {
     return Add-WEvaluationState $Context $actual $record $path
 }
 
+function Get-WComparisonSources {
+    param($Context, $Settings)
+    Get-WMasterRecords $Context.root 'Sources' | Where-Object {
+        $_.sourceId -in @($Settings.sourceIds) -or ($_.type -eq 'General' -and [bool](Get-WValue $_ 'active' $true))
+    }
+}
+
 function Add-WEvaluationState {
     param($Context, $Case, $Record, [string]$Path)
     $settings = Get-Period $Context $Case.period
+    $sources = @(Get-WComparisonSources $Context $settings)
+    Set-WValue $Record 'rankOnlySources' @($sources | Where-Object {$_.type -eq 'General'} | Select-Object sourceId,name)
     $stale = @()
-    foreach ($sourceId in @((Get-WValue $settings 'sourceIds' @()))) {
+    foreach ($sourceId in @($sources | Where-Object {$_.type -eq 'AI'} | ForEach-Object {$_.sourceId})) {
         $published = Get-WPublished $Context $Case $sourceId
         $currentVersion = 0
         if ($published) { $currentVersion = [int]$published.version }
@@ -810,7 +820,7 @@ function Convert-WRatings {
 }
 
 function Convert-WRankings {
-    param([object[]]$Rankings, [string[]]$SourceIds, $Published)
+    param([object[]]$Rankings, [string[]]$SourceIds, $Published, [string[]]$RankOnlySourceIds=@())
     $bySource = @{}
     $byRank = @{}
     foreach ($ranking in @($Rankings)) {
@@ -829,8 +839,9 @@ function Convert-WRankings {
             if ($null -ne $rank -and [string]$rank -ne '') { throw '순위가 있는 경우 Ranked 상태로 저장하십시오.' }
             $rank = $null
         }
-        $hasDelivery = $Published.ContainsKey($sourceId)
-        $noResults = $hasDelivery -and [bool](Get-WValue $Published[$sourceId].data 'noResults' $false)
+        $rankOnly = $sourceId -in $RankOnlySourceIds
+        $hasDelivery = $rankOnly -or $Published.ContainsKey($sourceId)
+        $noResults = -not $rankOnly -and $hasDelivery -and [bool](Get-WValue $Published[$sourceId].data 'noResults' $false)
         if (-not $hasDelivery -and $status -ne 'NotDelivered') { throw '검색 결과 입력 전인 조사 방식은 NotDelivered 상태여야 합니다.' }
         if ($hasDelivery -and -not $noResults -and $status -in @('NotDelivered','NoResults')) { throw '검색 결과 입력 상태와 품질 순위 상태가 일치하지 않습니다.' }
         if ($noResults -and $status -notin @('NoResults','Excluded')) { throw '결과 없음 조사 방식에는 순위를 부여할 수 없습니다.' }
@@ -840,7 +851,8 @@ function Convert-WRankings {
     foreach ($sourceId in $SourceIds) {
         if (-not $bySource.ContainsKey($sourceId)) {
             $status = 'NotDelivered'
-            if ($Published.ContainsKey($sourceId)) {
+            if ($sourceId -in $RankOnlySourceIds) { $status = 'Outside' }
+            elseif ($Published.ContainsKey($sourceId)) {
                 if ([bool](Get-WValue $Published[$sourceId].data 'noResults' $false)) { $status = 'NoResults' } else { $status = 'Outside' }
             }
             $bySource[$sourceId] = [pscustomobject]@{ sourceId = $sourceId; rank = $null; status = $status }
@@ -876,10 +888,13 @@ function Save-Evaluation {
         $settings = Get-Period $Context $actual.period
         Assert-WOpen $settings 'Evaluation'
         if ($actual.status -eq 'Cancelled') { throw '취소된 제출 건은 평가할 수 없습니다.' }
-        $sourceIds = @((Get-WValue $settings 'sourceIds' @()))
+        $sources = @(Get-WComparisonSources $Context $settings)
+        $sourceIds = @($sources | ForEach-Object {$_.sourceId})
+        $rankOnlyIds = @($sources | Where-Object {$_.type -eq 'General'} | ForEach-Object {$_.sourceId})
+        $deliveryIds = @($sources | Where-Object {$_.type -eq 'AI'} | ForEach-Object {$_.sourceId})
         $published = @{}
         $versions = [ordered]@{}
-        foreach ($sourceId in $sourceIds) {
+        foreach ($sourceId in $deliveryIds) {
             $latest = Get-WPublished $Context $actual $sourceId
             $currentVersion = 0
             if ($latest) { $published[$sourceId] = $latest; $currentVersion = [int]$latest.version }
@@ -889,7 +904,7 @@ function Save-Evaluation {
         }
         if ($published.Count -eq 0) { throw '평가할 검색 결과가 없습니다.' }
         $ratings = @(Convert-WRatings $DocumentRatings $published)
-        $ranks = @(Convert-WRankings $Rankings $sourceIds $published)
+        $ranks = @(Convert-WRankings $Rankings $sourceIds $published $rankOnlyIds)
         $completeDocuments = $true
         $documentCount = 0
         foreach ($sourceId in $published.Keys) {
@@ -902,7 +917,7 @@ function Save-Evaluation {
         $comparable = @($ranks | Where-Object { $_.status -in @('Ranked','Outside','Incomparable') }).Count
         $rankCount = @($ranks | Where-Object { $_.status -eq 'Ranked' }).Count
         $completeRanks = ($comparable -le 1 -or $rankCount -eq [Math]::Min(3,$comparable))
-        $allDelivered = $published.Count -eq $sourceIds.Count
+        $allDelivered = $published.Count -eq $deliveryIds.Count
         $data = [pscustomobject]@{ caseId = $actual.caseId; period = $actual.period; groupId = $actual.groupId; userId = $actual.userId;
             deliveryVersions = [pscustomobject]$versions; documentRatings = @($ratings); rankings = @($ranks);
             complete = ($completeDocuments -and $completeRanks -and $allDelivered); documentCount = $documentCount; requestFingerprint=$fingerprint }
@@ -926,11 +941,12 @@ function Get-CaseStatus {
     if ($actual.userId -eq $user.userId -or (Test-WRole $user 'admin')) { $evaluation = Get-Evaluation $Context $actual }
     $states = @()
     foreach ($sourceId in @((Get-WValue $period 'sourceIds' @()))) {
+        if (-not $sourceMap.ContainsKey($sourceId) -or $sourceMap[$sourceId].type -ne 'AI') { continue }
         if (-not $ownCase -and -not (Test-WRole $user 'admin') -and $assigned -notcontains $sourceId) { continue }
         $delivery = @($deliveries | Where-Object { $_.data.sourceId -eq $sourceId }) | Select-Object -First 1
         $state = 'NotStarted'; $count = 0; $publishedVersion = 0; $editingVersion = 0
         if ($delivery) { $state = 'Published'; $count = @($delivery.data.documents).Count; $publishedVersion = $delivery.version; if ($delivery.data.noResults) { $state = 'NoResults' } }
-        $canEdit = (Test-WRole $user 'admin') -or $assigned -contains $sourceId -or ($ownCase -and $sourceMap.ContainsKey($sourceId) -and $sourceMap[$sourceId].type -eq 'General')
+        $canEdit = (Test-WRole $user 'admin') -or $assigned -contains $sourceId
         if ($canEdit) {
             $edit = Get-DeliveryForEdit $Context $actual $sourceId
             if ($edit) {

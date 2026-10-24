@@ -152,7 +152,12 @@ try {
     $publishedRequest=New-Request
     $s02=Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 0 -RequestId $publishedRequest -Status Published -Documents $docs
     $s03=Save-Delivery -Context $ai -Case $case -SourceId S03 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents @((New-Document P2))
-    $s01=Save-Delivery -Context $examiner -Case $case -SourceId S01 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -NoResults $true -NoResultsReason '관련 문헌 없음'
+    Test-Case 'general search is rank-only and cannot be entered by examiner or administrator' {
+        foreach ($actor in @($examiner,$admin)) {
+            Assert-Throws {Save-Delivery -Context $actor -Case $case -SourceId S01 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents $docs} '비교 전용'
+        }
+        Assert-True (@((Get-CaseStatus $examiner $case).deliveries | Where-Object {$_.sourceId -eq 'S01'}).Count -eq 0) 'general search is never a pending delivery'
+    }
 
     Test-Case 'publication idempotency compares exact request content' {
         $again=Save-Delivery -Context $admin -Case $case -SourceId S02 -ExpectedVersion 0 -RequestId $publishedRequest -Status Published -Documents $docs
@@ -181,12 +186,27 @@ try {
         Assert-True ($edited.data.documents[0].title -eq '보존할 명칭' -and $edited.data.documents[0].description -eq '보존할 관련 설명' -and $edited.data.documents[0].type -eq 'LegacyCustom') 'number-only editing retains legacy fields'
     }
 
-    $versions=@{S01=1;S02=1;S03=1}
+    Test-Case 'one AI can be ranked against general search, while missing AI and legacy general files stay separate' {
+        $oneAiCase=New-Submission $admin $month -ApplicationNumber '10-2026-0000199' -RequestId (New-Request)
+        $oneAi=Save-Delivery $admin $oneAiCase S02 0 (New-Request) Published -Documents @((New-Document 'ONE-AI'))
+        $rankPair=@(@{sourceId='S01';rank=1;status='Ranked'},@{sourceId='S02';rank=2;status='Ranked'})
+        $pair=Save-Evaluation $admin $oneAiCase 0 (New-Request) @{S02=1} -Rankings $rankPair
+        Assert-True (-not $pair.data.complete -and @($pair.data.rankings | Where-Object {$_.sourceId -eq 'S01' -and $_.rank -eq 1}).Count -eq 1) 'rank-only comparator works with one available AI, missing AI remains pending'
+        Assert-Throws {Save-Evaluation $admin $oneAiCase 1 (New-Request) @{S02=1} -Rankings @(@{sourceId='S03';rank=1;status='Ranked'})} '입력 전'
+        Assert-Throws {Save-Evaluation $admin $oneAiCase 1 (New-Request) @{S02=1} -DocumentRatings @(@{sourceId='S01';documentId='legacy';score=5;cited=$true})} '문헌을 평가'
+        $legacyPath=Join-Path $testRoot ('Data/'+$month+'/G01/Deliveries/S01/U001/'+$oneAiCase.caseId)
+        $legacyData=@{caseId=$oneAiCase.caseId;period=$month;groupId='G01';userId='U001';sourceId='S01';sourceName='선행기술조사';status='Published';noResults=$false;documents=@(@{documentId='legacy';identifier='OLD';title='기존 비교 문헌'})}
+        [void](Write-Revision -Path $legacyPath -ExpectedVersion 0 -RequestId (New-Request) -ActorId U001 -Kind Delivery -TargetId ($oneAiCase.caseId+'-S01') -Data $legacyData)
+        Assert-True (@(Get-Deliveries $admin $oneAiCase).Count -eq 1 -and -not (Get-Evaluation $admin $oneAiCase).needsReconfirmation) 'legacy general delivery is ignored without invalidating the AI comparison'
+        Assert-True ((Read-Revision $legacyPath).version -eq 1) 'legacy source files are preserved'
+    }
+
+    $versions=@{S02=1;S03=1}
     $ratings=@(
         [pscustomobject]@{sourceId='S02';documentId=$s02.data.documents[0].documentId;score=0;cited=$false;note='실제 0점'},
         [pscustomobject]@{sourceId='S03';documentId=$s03.data.documents[0].documentId;score=$null;cited=$null;note='미평가'}
     )
-    $ranks=@(@{sourceId='S01';rank=$null;status='NoResults'},@{sourceId='S02';rank=1;status='Ranked'},@{sourceId='S03';rank=2;status='Ranked'})
+    $ranks=@(@{sourceId='S01';rank=3;status='Ranked'},@{sourceId='S02';rank=1;status='Ranked'},@{sourceId='S03';rank=2;status='Ranked'})
     $evaluationRequest=New-Request
     $eval=Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 0 -RequestId $evaluationRequest -DeliveryVersions $versions -DocumentRatings $ratings -Rankings $ranks
 
@@ -225,8 +245,8 @@ try {
     }
 
     Test-Case 'ranking and individual rating validation reject inconsistent values' {
-        $currentVersions=@{S01=1;S02=3;S03=1}
-        $badRanks=@(@{sourceId='S01';rank=$null;status='NoResults'},@{sourceId='S02';rank=1;status='Ranked'},@{sourceId='S03';rank=1;status='Ranked'})
+        $currentVersions=@{S02=3;S03=1}
+        $badRanks=@(@{sourceId='S01';rank=3;status='Ranked'},@{sourceId='S02';rank=1;status='Ranked'},@{sourceId='S03';rank=1;status='Ranked'})
         Assert-Throws {Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 1 -RequestId (New-Request) -DeliveryVersions $currentVersions -DocumentRatings $ratings -Rankings $badRanks} '동순위'
         $bad=@([pscustomobject]@{sourceId='S02';documentId=$s02.data.documents[0].documentId;score=6;cited=$true;note=''})
         Assert-Throws {Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 1 -RequestId (New-Request) -DeliveryVersions $currentVersions -DocumentRatings $bad -Rankings $ranks} '0~5'
@@ -235,6 +255,7 @@ try {
         $ratings[1].score=5;$ratings[1].cited=$true
         $done=Save-Evaluation -Context $examiner -Case $case -ExpectedVersion 1 -RequestId (New-Request) -DeliveryVersions $currentVersions -DocumentRatings $ratings -Rankings $ranks
         Assert-True ($done.data.complete -and -not $done.needsReconfirmation) 'completed snapshot matches publications'
+        Assert-True ($done.data.documentCount -eq 2 -and @($done.data.rankings | Where-Object {$_.sourceId -eq 'S01' -and $_.rank -eq 3}).Count -eq 1 -and $done.data.deliveryVersions.PSObject.Properties.Name -notcontains 'S01') 'general ranking is saved without a delivery version or document rating'
     }
 
     Test-Case 'attachment paths are restricted to owning case and source' {
@@ -271,7 +292,7 @@ try {
         Assert-True ($cancelled.cpc -eq 'G06F 16/00' -and $cancelled.examinerBureau -eq $extra.examinerBureau -and $cancelled.examinerDivision -eq $extra.examinerDivision) 'cancel preserves original CPC and affiliation snapshot'
         Assert-True ((Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest).version -eq 2) 'cancel retry'
         Assert-Throws {Cancel-Submission -Context $examiner -Case $extra -ExpectedVersion 1 -RequestId $cancelRequest -Reason '다른 사유'} '요청 ID'
-        Assert-Throws {Save-Delivery -Context $examiner -Case $extra -SourceId S01 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -NoResults $true -NoResultsReason none} '취소'
+        Assert-Throws {Save-Delivery -Context $admin -Case $extra -SourceId S02 -ExpectedVersion 0 -RequestId (New-Request) -Status Published -Documents $docs} '취소'
     }
 
     Test-Case 'legacy submissions retry with the original fingerprint and blank new fields' {

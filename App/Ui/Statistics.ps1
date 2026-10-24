@@ -82,7 +82,7 @@ function Export-StatisticsView([string]$OutputDirectory='') {
         '그룹별 통계'=[ordered]@{groupName='그룹';participantCount='참여 심사관';unselectedCount='미선정';caseCount='출원';deliveredCount='AI 결과 입력 완료';waitingCount='입력 대기';completeCount='평가 완료';partialCount='평가 중';unreviewedCount='미평가';staleCount='재확인';evaluationRate='평가 완료율'}
         '계정별 현황'=[ordered]@{name='이름';bureau='심사국';division='심사과';groupName='그룹';roles='역할';activeLabel='계정';selectionStatus='대상 건 선정';caseCount='본인 출원';completeCount='평가 완료';pendingCount='평가 남음';staleCount='재확인';aiPublished='담당 입력 완료';aiAssigned='담당 결과 입력 대상';assignments='AI 배정'}
         '출원별 현황'=[ordered]@{applicationNumber='출원번호';cpc='CPC';examiner='심사관';groupName='그룹';deliveryStatus='AI 결과 입력';aiProgress='입력된 방식';evaluationStatus='평가';documentCount='문헌 수'}
-        '조사 방식별 통계'=[ordered]@{sourceName='조사 방식';expectedCount='대상';publishedCount='입력 완료';pendingCount='입력 대기';documentCount='문헌 수';scoreCount='점수 입력 문헌';averageScore='평균 점수';citedCount='인용 O';citationCount='O/X 입력 문헌';citationRate='인용률';firstCount='1위 횟수'}
+        '조사 방식별 통계'=[ordered]@{sourceName='조사 방식';assessmentScope='평가 범위';expectedCount='입력 대상';publishedCount='입력 완료';pendingCount='입력 대기';documentCount='문헌 수';scoreCount='점수 입력 문헌';averageScore='평균 점수';citedCount='인용 O';citationCount='O/X 입력 문헌';citationRate='인용률';firstCount='1위 횟수'}
         '조회 기준'=[ordered]@{scope='조회 범위';capturedAt='집계 시각';rule='집계 기준'}
     }
     $sheets=[ordered]@{'그룹별 통계'=@($view.groups);'계정별 현황'=@($view.accounts);'출원별 현황'=@($view.cases);'조사 방식별 통계'=@($view.sources);'조회 기준'=@([pscustomobject]@{scope=$ui.StatsScopeText.Text;capturedAt=$script:statisticsSnapshot.capturedAt;rule='취소·선정 초안 제외. 점수·인용은 최신 검색 결과와 일치하는 입력값만, 순위는 재확인 불필요한 평가만 집계.'})}

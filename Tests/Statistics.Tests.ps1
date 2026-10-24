@@ -28,12 +28,12 @@ $b=New-Submission $examiner $period -ApplicationNumber '10-2026-0000002' -Reques
 $c=New-Submission $otherContext $period -ApplicationNumber '10-2026-0000003' -RequestId (Request)
 $cancelled=New-Submission $admin $period -ApplicationNumber '10-2026-0000004' -RequestId (Request)
 [void](Cancel-Submission $admin $cancelled -ExpectedVersion $cancelled.version -RequestId (Request))
-$versions=@{};$ratings=@();$rankings=@();$n=0
-foreach ($source in @('S01','S02','S03')) {
+$versions=@{};$ratings=@();$rankings=@([pscustomobject]@{sourceId='S01';status='Ranked';rank=1});$n=0
+foreach ($source in @('S02','S03')) {
     $n++;$saved=Save-Delivery $admin $a $source -ExpectedVersion 0 -RequestId (Request) -Status Published -Documents @((Document "D$n"))
     $versions[$source]=$saved.version
-    $ratings+=[pscustomobject]@{sourceId=$source;documentId="D$n";score=$(if ($n -eq 1) {0} elseif ($n -eq 2) {5} else {$null});cited=$(if ($n -eq 3) {$null} else {$n -eq 2});note=''}
-    $rankings+=[pscustomobject]@{sourceId=$source;status='Ranked';rank=$(if ($n -eq 1) {2} elseif ($n -eq 2) {1} else {3})}
+    $ratings+=[pscustomobject]@{sourceId=$source;documentId="D$n";score=$(if ($n -eq 1) {0} else {$null});cited=$(if ($n -eq 1) {$false} else {$null});note=''}
+    $rankings+=[pscustomobject]@{sourceId=$source;status='Ranked';rank=($n+1)}
 }
 [void](Save-Delivery $admin $b S02 -ExpectedVersion 0 -RequestId (Request) -Status Draft -Documents @((Document 'Draft')))
 [void](Save-Delivery $admin $b S03 -ExpectedVersion 0 -RequestId (Request) -Status Published -Documents @((Document 'B3')))
@@ -42,11 +42,12 @@ $snapshot=Get-AdminStatistics $admin $period;$view=Select-AdminStatistics $snaps
 Assert-Stat ($view.summary.caseCount -eq 3 -and $snapshot.cancelledCount -eq 1 -and $view.summary.deliveredCount -eq 1 -and $view.summary.waitingCount -eq 2 -and $view.summary.partialCount -eq 1) 'Draft deliveries and cancelled cases must not count as completed work.'
 Assert-Stat (@($view.accounts | Where-Object {$_.userId -eq 'U003'})[0].selectionStatus -eq '임시저장') 'A saved selection draft must remain distinguishable from a confirmed selection.'
 Assert-Stat (@($view.accounts | Where-Object {$_.userId -eq $unused.userId})[0].selectionStatus -eq '미참여') 'Nonparticipating inactive accounts must remain visible.'
-$s1=@($view.sources | Where-Object {$_.sourceId -eq 'S01'})[0];$s3=@($view.sources | Where-Object {$_.sourceId -eq 'S03'})[0]
-Assert-Stat ($s1.averageScore -eq '0.00' -and $s1.scoreCount -eq 1 -and $s1.citationRate -eq '0%' -and $s3.scoreCount -eq 0 -and $s3.citationRate -eq '—') 'A real zero/X must count, while null values must not enter either denominator.'
+$s1=@($view.sources | Where-Object {$_.sourceId -eq 'S01'})[0];$s2=@($view.sources | Where-Object {$_.sourceId -eq 'S02'})[0];$s3=@($view.sources | Where-Object {$_.sourceId -eq 'S03'})[0]
+Assert-Stat ($s1.firstCount -eq 1 -and $s1.pendingCount -eq 0 -and $s1.expectedCount -eq 0 -and $s1.documentCount -eq 0 -and $s1.averageScore -eq '—') 'General search counts quality rankings only, never pending deliveries or document scores.'
+Assert-Stat ($s2.averageScore -eq '0.00' -and $s2.scoreCount -eq 1 -and $s2.citationRate -eq '0%' -and $s3.scoreCount -eq 0 -and $s3.citationRate -eq '—') 'A real zero/X must count, while null values must not enter either denominator.'
 Write-Output 'PASS cancelled/draft exclusion, partial evaluation, zero/X and null denominators'
 
-$ratings[2].score=4;$ratings[2].cited=$false
+$ratings[1].score=4;$ratings[1].cited=$false
 $evaluation=Save-Evaluation $admin $a -ExpectedVersion $evaluation.version -RequestId (Request) -DeliveryVersions $versions -DocumentRatings $ratings -Rankings $rankings
 $snapshot=Get-AdminStatistics $admin $period;$view=Select-AdminStatistics $snapshot
 Assert-Stat ($view.summary.completeCount -eq 1 -and $view.summary.evaluationRate -eq '33.3%' -and ($view.groups | Measure-Object caseCount -Sum).Sum -eq $view.summary.caseCount) 'Overall and grouped totals must agree.'

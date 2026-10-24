@@ -28,6 +28,8 @@ function Get-AdminStatistics {
         $userMap=@{};foreach ($user in $users) {$userMap[$user.userId]=$user}
         $groupMap=@{};foreach ($group in $groups) {$groupMap[$group.groupId]=$group}
         $sourceMap=@{};foreach ($source in $sources) {$sourceMap[$source.sourceId]=$source}
+        $comparisonSources=@(Get-WComparisonSources $Context $settings)
+        $aiIds=@($comparisonSources | Where-Object {$_.type -eq 'AI'} | ForEach-Object {$_.sourceId})
         $caseRows=New-Object 'System.Collections.Generic.List[object]'
         $sourceRows=New-Object 'System.Collections.Generic.List[object]'
         $cancelledCount=0
@@ -37,7 +39,7 @@ function Get-AdminStatistics {
                 if ($actual.status -eq 'Cancelled') {return [pscustomobject]@{cancelled=$true}}
                 $evaluation=Read-Revision -Path (Get-WEvaluationPath $Context $actual)
                 $published=@{};$latest=@{};$stale=$false
-                foreach ($sourceId in $settings.sourceIds) {
+                foreach ($sourceId in $aiIds) {
                     $published[$sourceId]=Get-WPublished $Context $actual $sourceId
                     $latest[$sourceId]=Read-Revision -Path (Get-WDeliveryPath $Context $actual $sourceId)
                     $version=if ($published[$sourceId]) {[int]$published[$sourceId].version} else {0}
@@ -48,7 +50,7 @@ function Get-AdminStatistics {
             if ($captured.cancelled) {$cancelledCount++;continue}
             $actual=$captured.case;$evaluation=$captured.evaluation
             $aiTotal=0;$aiCompleted=0;$documents=0
-            foreach ($sourceId in $settings.sourceIds) {
+            foreach ($sourceId in @($comparisonSources | ForEach-Object {$_.sourceId})) {
                 $source=$sourceMap[$sourceId];$delivery=$captured.published[$sourceId];$edit=$captured.latest[$sourceId]
                 $isAi=(Get-WValue $source 'type') -eq 'AI'
                 if ($isAi) {$aiTotal++;if ($delivery) {$aiCompleted++}}
@@ -107,7 +109,7 @@ function Get-AdminStatistics {
         }
         [pscustomobject]@{period=$Period;periodStatus=$settings.status;capturedAt=[datetime]::Now.ToString('yyyy-MM-dd HH:mm:ss');cancelledCount=$cancelledCount
             cases=@($caseRows.ToArray());accounts=@($accountRows.ToArray());sourceCases=@($sourceRows.ToArray())
-            groups=@($groups | Select-Object groupId,name);sources=@($sources | Where-Object {$_.sourceId -in $settings.sourceIds} | Select-Object sourceId,name)
+            groups=@($groups | Select-Object groupId,name);sources=@($comparisonSources | Select-Object sourceId,name,type)
         }
     }
 }
@@ -140,8 +142,8 @@ function Select-AdminStatistics {
         $rows=@($sourceCases | Where-Object {$_.sourceId -eq $source.sourceId})
         $scoreCount=0;$scoreSum=0;$citationCount=0;$citedCount=0;$documentCount=0
         foreach ($row in $rows) {$scoreCount+=$row.scoreCount;$scoreSum+=$row.scoreSum;$citationCount+=$row.citationCount;$citedCount+=$row.citedCount;$documentCount+=$row.documentCount}
-        [pscustomobject]@{sourceName=$source.name;sourceId=$source.sourceId;expectedCount=$rows.Count;publishedCount=@($rows | Where-Object {$_.published}).Count
-            pendingCount=@($rows | Where-Object {-not $_.published}).Count;documentCount=$documentCount
+        [pscustomobject]@{sourceName=$source.name;sourceId=$source.sourceId;assessmentScope=$(if ((Get-WValue $source 'type') -eq 'General') {'품질 순위만'} else {'문헌·품질 순위'});expectedCount=@($rows | Where-Object {$_.isAi}).Count;publishedCount=@($rows | Where-Object {$_.isAi -and $_.published}).Count
+            pendingCount=@($rows | Where-Object {$_.isAi -and -not $_.published}).Count;documentCount=$documentCount
             scoreCount=[int]$scoreCount;averageScore=$(if ($scoreCount) {'{0:0.00}' -f ($scoreSum/$scoreCount)} else {'—'})
             citedCount=[int]$citedCount;citationCount=[int]$citationCount;citationRate=$(if ($citationCount) {'{0:0.#}%' -f (100.0*$citedCount/$citationCount)} else {'—'})
             firstCount=@($rows | Where-Object {$_.rank -eq 1}).Count

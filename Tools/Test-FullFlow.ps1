@@ -155,8 +155,8 @@ for ($i=0;$i -lt $cases.Count;$i++) {
         $saved=Save-Delivery $ctx $case $sourceId $draft.version (Request) Published -Documents $docs
         Check ($saved.actorId -eq $person.userId -and $saved.data.documents.Count -eq 7) ($case.applicationNumber+' '+$sourceId+' 담당자 입력 완료')
     }
-    # Existing prior-art search is entered by the examiner, for the three-way ranking.
-    $null=Save-Delivery $owner $case S01 0 (Request) Published -Documents (Documents $i 1)
+    # General prior-art search needs no delivery; it participates only in the ranking.
+    Check (@(Get-Deliveries $owner $case | Where-Object {$_.data.sourceId -eq 'S01'}).Count -eq 0) ($case.applicationNumber+' 선행기술조사 입력 불필요')
     Check ((Get-CaseStatus $owner $case).deliveryStatusLabel -eq '입력 완료') ($case.applicationNumber+' AI 검색 결과 입력 완료 상태')
 }
 $view=Select-AdminStatistics (Get-AdminStatistics $admin $Period)
@@ -167,7 +167,7 @@ Save-Stage '03-ResultsEntered' 'AI 검색 결과 입력 완료 · 평가 전'
 foreach ($person in $people) {
     $ctx=Get-Context -Root $root -UserId $person.userId -AccessMode User
     foreach ($case in @(Get-Cases $ctx $Period Mine)) {
-        $versions=@{};$ratings=@();$rankings=@();$index=0
+        $versions=@{};$ratings=@();$rankings=@(@{sourceId='S01';rank=1;status='Ranked'});$index=0
         foreach ($delivery in @(Get-Deliveries $ctx $case | Sort-Object {$_.data.sourceId})) {
             $sourceId=$delivery.data.sourceId;$versions[$sourceId]=$delivery.version
             $rankings+=@{sourceId=$sourceId;rank=([int]$sourceId.Substring(1));status='Ranked'}
@@ -176,7 +176,7 @@ foreach ($person in $people) {
             }
         }
         $saved=Save-Evaluation $ctx $case 0 (Request) $versions -DocumentRatings $ratings -Rankings $rankings
-        Check ($saved.data.complete -and -not $saved.needsReconfirmation -and $saved.data.documentRatings.Count -eq 21) ($person.name+' '+$case.applicationNumber+' 평가 완료')
+        Check ($saved.data.complete -and -not $saved.needsReconfirmation -and $saved.data.documentRatings.Count -eq 14) ($person.name+' '+$case.applicationNumber+' 평가 완료')
         $zero=@($saved.data.documentRatings | Where-Object {$_.score -eq 0})
         Check ($zero.Count -gt 0 -and $zero[0].cited -eq $false) ($case.applicationNumber+' 실제 0점·인용 X 보존')
     }
@@ -193,7 +193,7 @@ foreach ($person in $people) {
     Check ($filtered.summary.caseCount -eq 2 -and $filtered.summary.completeCount -eq 2) ($person.name+' 계정별 본인 대상 건·평가 2건')
     if ($person.sourceId) {Check ($filtered.accounts[0].aiAssigned -eq 10 -and $filtered.accounts[0].aiPublished -eq 10) ($person.name+' 본인 평가와 담당 AI 결과 입력 10건 분리 집계')}
 }
-Check (($view.sources | Measure-Object documentCount -Sum).Sum -eq 420 -and ($view.sources | Measure-Object scoreCount -Sum).Sum -eq 420) '선행기술조사 140건 + AI 검색 결과 280건 = 문헌별 평가 420건'
+Check (($view.sources | Measure-Object documentCount -Sum).Sum -eq 280 -and ($view.sources | Measure-Object scoreCount -Sum).Sum -eq 280) '선행기술조사는 순위만 비교 · AI 검색 결과 280건 = 문헌별 평가 280건'
 Save-Stage '04-Evaluated' 'AI 검색 결과 평가 완료'
 
 if ($IncludeGui) {
@@ -203,11 +203,11 @@ if ($IncludeGui) {
     $screen=Test-Window '02-SelectionConfirmed' $id Evaluation '02-SelectionConfirmed'
     Check ($screen.evaluationOpened -and $screen.caseIds.Count -eq 2 -and @($screen.caseStatusLabels | Where-Object {$_ -ne '대기 중'}).Count -eq 0) 'WPF 선정 확정 후 본인 대상 건 2건 · 대기 중'
     $screen=Test-Window '03-ResultsEntered' $id Evaluation '03-ResultsEntered'
-    Check ($screen.ratingCount -eq 21 -and ($screen.rankSourceIds -join '|') -eq 'S01|S02|S03') 'WPF 선행기술조사와 AI 2개 방식 · 평가할 문헌 21건'
+    Check ($screen.ratingCount -eq 14 -and ($screen.rankSourceIds -join '|') -eq 'S01|S02|S03') 'WPF 선행기술조사와 AI 2개 방식 · 평가할 AI 문헌 14건'
     for ($i=0;$i -lt $people.Count;$i++) {
         $person=$people[$i]
         $screen=Test-Window '04-Evaluated' $person.userId Evaluation ('04-Examiner-{0:00}' -f ($i+1))
-        Check ($screen.caseIds.Count -eq 2 -and $screen.ratingCount -eq 21 -and $screen.ratingsHeight -ge 300 -and $screen.ratingsHeight -gt $screen.rankHeight -and $screen.deliveryVisible -eq [bool]$person.sourceId) ($person.name+' WPF 본인 평가·역할별 메뉴·문헌 목록 높이')
+        Check ($screen.caseIds.Count -eq 2 -and $screen.ratingCount -eq 14 -and $screen.ratingsHeight -ge 300 -and $screen.ratingsHeight -gt $screen.rankHeight -and $screen.deliveryVisible -eq [bool]$person.sourceId) ($person.name+' WPF 본인 평가·역할별 메뉴·문헌 목록 높이')
         if ($person.sourceId) {
             $screen=Test-Window '04-Evaluated' $person.userId AI ('05-AiHandler-{0:00}' -f ($i+1))
             Check ($screen.workspace -eq 'AI' -and $screen.caseIds.Count -eq 10 -and $screen.documentCount -eq 7 -and ($screen.sourceIds -join '|') -eq $person.sourceId) ($person.name+' WPF 담당 그룹 10건·지정 AI·문헌 7건')
@@ -218,7 +218,7 @@ if ($IncludeGui) {
 }
 $report=[ordered]@{period=$Period;notice='모든 이름·출원번호·선행기술 문헌·평가는 테스트용 가상 데이터입니다. 실제 AI 검색을 실행하지 않았습니다.';passed=$true;checkCount=$checks.Count;guiWindowCount=$gui.Count;participants=@($people.ToArray());stages=@($stages.ToArray());summary=$view.summary;groups=$view.groups;accounts=$view.accounts;sources=$view.sources;checks=@($checks.ToArray());screenshots=@($gui.ToArray())}
 [IO.File]::WriteAllText((Join-Path $output 'Report.json'),(ConvertTo-Json $report -Depth 15),$utf8)
-$lines=@('전체 업무 흐름 테스트 결과',('운영월: '+$Period),('검증: '+$checks.Count+'개 통과 / WPF 화면 '+$gui.Count+'개'),'심사관 10명(두 그룹 각 5명), AI 담당자 4명(그룹별 2명)','대상 건 20건 / AI 검색 결과 280문헌 / 선행기술조사 140문헌 / 문헌 평가 420건','모든 데이터는 테스트용 가상 자료이며 실제 AI 검색을 수행하지 않았습니다.','','각 단계 폴더의 User.cmd에서 심사과 - 이름을 선택하세요. Admin.cmd는 관리자 통계 화면을 엽니다.','단계별 데이터는 독립된 복사본입니다. 앞 단계에서 입력해도 다른 단계는 바뀌지 않습니다.','프로그램 위치를 옮겼다면 이 도구를 다시 실행해 실행 파일을 새로 만드세요.','')
+$lines=@('전체 업무 흐름 테스트 결과',('운영월: '+$Period),('검증: '+$checks.Count+'개 통과 / WPF 화면 '+$gui.Count+'개'),'심사관 10명(두 그룹 각 5명), AI 담당자 4명(그룹별 2명)','대상 건 20건 / AI 검색 결과 280문헌 / 선행기술조사는 순위만 비교 / 문헌 평가 280건','모든 데이터는 테스트용 가상 자료이며 실제 AI 검색을 수행하지 않았습니다.','','각 단계 폴더의 User.cmd에서 심사과 - 이름을 선택하세요. Admin.cmd는 관리자 통계 화면을 엽니다.','단계별 데이터는 독립된 복사본입니다. 앞 단계에서 입력해도 다른 단계는 바뀌지 않습니다.','프로그램 위치를 옮겼다면 이 도구를 다시 실행해 실행 파일을 새로 만드세요.','')
 $lines+=@($people | ForEach-Object {('{0} | {1} - {2} | {3}' -f $_.groupId,$_.division,$_.name,$(if ($_.sourceId -eq 'S02') {'ChatGPT 담당자 겸 심사관'} elseif ($_.sourceId -eq 'S03') {'클로드 담당자 겸 심사관'} else {'심사관'}))})
 [IO.File]::WriteAllLines((Join-Path $output '안내.txt'),[string[]]$lines,$utf8)
 Write-Output "PASS full flow: $($checks.Count) checks, $($gui.Count) WPF windows"

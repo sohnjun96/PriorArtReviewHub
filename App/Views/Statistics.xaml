@@ -60,7 +60,7 @@
           </StackPanel></TabItem>
           <TabItem Header="조사 방식별 통계"><StackPanel Margin="12"><TextBlock Text="최신 검색 결과와 일치하는 평가만 집계합니다. 평균은 점수 입력 문헌, 인용률은 O/X 선택 문헌을 분모로 합니다. 재확인 필요 건의 순위는 제외합니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,0,0,10"/>
             <DataGrid x:Name="StatsSourcesGrid" Style="{StaticResource StatsGrid}"><DataGrid.Columns>
-              <DataGridTextColumn Header="조사 방식" Binding="{Binding sourceName}" Width="*" MinWidth="140"/><DataGridTextColumn Header="대상" Binding="{Binding expectedCount}" Width="65"/>
+              <DataGridTextColumn Header="조사 방식" Binding="{Binding sourceName}" Width="*" MinWidth="140"/><DataGridTextColumn Header="평가 범위" Binding="{Binding assessmentScope}" Width="115"/><DataGridTextColumn Header="입력 대상" Binding="{Binding expectedCount}" Width="80"/>
               <DataGridTextColumn Header="입력 완료" Binding="{Binding publishedCount}" Width="90"/><DataGridTextColumn Header="입력 대기" Binding="{Binding pendingCount}" Width="90"/>
               <DataGridTextColumn Header="문헌" Binding="{Binding documentCount}" Width="65"/><DataGridTextColumn Header="점수 입력" Binding="{Binding scoreCount}" Width="90"/>
               <DataGridTextColumn Header="평균 점수" Binding="{Binding averageScore}" Width="90"/><DataGridTextColumn Header="인용 O" Binding="{Binding citedCount}" Width="75"/>
@@ -69,7 +69,7 @@
             </DataGrid.Columns></DataGrid>
           </StackPanel></TabItem>
         </TabControl>
-        <TextBlock Text="미선정에는 임시저장 중인 참여자도 포함됩니다. AI 결과 입력 완료는 해당 월 AI 검색 결과가 모두 입력된 출원이며, 평가 완료는 선행기술조사를 포함한 모든 비교 방식의 평가가 완료된 출원입니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,12,0,0"/>
+        <TextBlock Text="미선정에는 임시저장 중인 참여자도 포함됩니다. AI 결과 입력 완료는 해당 월 AI 검색 결과가 모두 입력된 출원이며, 평가 완료는 AI 문헌 평가와 선행기술조사를 포함한 품질 순위가 완료된 출원입니다. 선행기술조사 결과 입력은 필요하지 않습니다." Foreground="#64748B" TextWrapping="Wrap" Margin="0,12,0,0"/>
       </StackPanel>
     </ScrollViewer>
   </DockPanel>

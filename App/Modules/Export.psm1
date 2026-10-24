@@ -330,7 +330,9 @@ function Export-ReviewSnapshot {
         $cpc = [string](Get-ExportProperty $case 'cpc' '')
         $evaluation = $snapshot.Evaluation
         $evaluationData = Get-ExportProperty $evaluation 'data'
-        $ratings = @(Get-ExportProperty $evaluationData 'documentRatings' @())
+        $rankOnlySources = @(Get-ExportProperty $evaluation 'rankOnlySources' @())
+        $rankOnlyIds = @($rankOnlySources | ForEach-Object {$_.sourceId})
+        $ratings = @(Get-ExportProperty $evaluationData 'documentRatings' @() | Where-Object {$_.sourceId -notin $rankOnlyIds})
         $rankings = @(Get-ExportProperty $evaluationData 'rankings' @())
         $evaluatedVersions = Get-ExportProperty $evaluationData 'deliveryVersions' @{}
         $stale = [bool](Get-ExportProperty $evaluation 'needsReconfirmation' $false)
@@ -345,6 +347,14 @@ function Export-ReviewSnapshot {
             evaluationVersion = Get-ExportProperty $evaluation 'version'
             evaluationStatus = $(if (-not $snapshot.EvaluationVisible) { '조회 권한 없음' } elseif ($null -eq $evaluation) { '미평가' } elseif ($stale) { '재확인 필요' } elseif ([bool](Get-ExportProperty $evaluationData 'complete' $false)) { '평가 완료' } else { '평가 중' })
         })
+        foreach ($source in $rankOnlySources) {
+            $ranking = @($rankings | Where-Object {$_.sourceId -eq $source.sourceId}) | Select-Object -First 1
+            $rankingRows.Add([pscustomobject][ordered]@{
+                period=$Period;groupId=$case.groupId;examiner=$case.examinerName;examinerBureau=$examinerBureau;examinerDivision=$examinerDivision;applicationNumber=[string]$case.applicationNumber;cpc=$cpc;caseId=$case.caseId
+                sourceId=$source.sourceId;sourceName=$source.name;deliveryVersion=$null;evaluatedVersion=$null
+                rank=(Get-ExportProperty $ranking 'rank');status=(Get-ExportProperty $ranking 'status' '미평가');needsReconfirmation=$(if ($stale) {'필요'} else {''})
+            })
+        }
         foreach ($delivery in $snapshot.Deliveries) {
             $data = $delivery.data
             $sourceId = [string]$data.sourceId

@@ -12,10 +12,10 @@ $taskPeriod=Get-Date -Format 'yyyy-MM'
 $taskCase=New-Submission -Context $taskContext -Period $taskPeriod -ApplicationNumber '10-2026-0000123' -Cpc 'G06F 16/00' -RequestId ([guid]::NewGuid().ToString('N'))
 $taskVersions=@{}
 $taskRatings=@()
-$taskRankings=@()
+$taskRankings=@([pscustomobject]@{sourceId='S01';rank=1;status='Ranked'})
 $taskIndex=0
 $taskBlankDocumentId='D-Blank'
-foreach ($taskSource in @('S01','S02','S03')) {
+foreach ($taskSource in @('S02','S03')) {
     $taskIndex++
     $taskDoc=[pscustomobject]@{documentId=('D'+$taskIndex);type='특허';identifier=('KR10-000000'+$taskIndex);title=('화면 검증 문헌 '+$taskIndex);description='동일 출원의 조사 방식별 납품';attachments=@()}
     $taskDocuments=@($taskDoc)
@@ -23,7 +23,7 @@ foreach ($taskSource in @('S01','S02','S03')) {
     $taskDelivery=Save-Delivery -Context $taskContext -Case $taskCase -SourceId $taskSource -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -Status Published -Documents $taskDocuments
     $taskVersions[$taskSource]=$taskDelivery.version
     $taskRatings += [pscustomobject]@{sourceId=$taskSource;documentId=$taskDoc.documentId;score=($taskIndex-1);cited=$false;note='0점과 X 보존 확인'}
-    $taskRankings += [pscustomobject]@{sourceId=$taskSource;rank=$taskIndex;status='Ranked'}
+    $taskRankings += [pscustomobject]@{sourceId=$taskSource;rank=($taskIndex+1);status='Ranked'}
 }
 $taskEvaluation=Save-Evaluation -Context $taskContext -Case $taskCase -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -DeliveryVersions $taskVersions -DocumentRatings $taskRatings -Rankings $taskRankings
 if ($null -eq $taskEvaluation.data.documentRatings[0].score -or $taskEvaluation.data.documentRatings[0].score -ne 0) {throw '실제 0점이 보존되지 않았습니다.'}
@@ -63,7 +63,8 @@ try {
     if (-not $taskAdminSession.caseScrollVerified) {throw '다른 출원으로 이동할 때 화면 위치 초기화 또는 같은 출원 재조회 시 위치 유지에 실패했습니다.'}
     if (-not $taskAdminSession.separateUserFlowsVerified) {throw '신규 사용자 등록과 기존 사용자 수정·비활성화 절차가 분리되지 않았습니다.'}
     $taskNewEvaluation=Get-Evaluation -Context $taskContext -Case $taskCase
-    $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S01
+    $taskNewDelivery=Get-DeliveryForEdit -Context $taskContext -Case $taskCase -SourceId S02
+    if (-not $taskAdminSession.rankOnlyComparisonVerified -or @($taskNewEvaluation.data.rankings | Where-Object {$_.sourceId -eq 'S01' -and $_.rank -eq 1}).Count -ne 1 -or @($taskNewEvaluation.data.documentRatings | Where-Object {$_.sourceId -eq 'S01'}).Count) {throw '선행기술조사가 결과 입력 없이 순위 비교에만 포함되지 않았습니다.'}
     $taskNewUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '화면 등록 심사관'})[0]
     if ($taskNewUser.name -ne '화면 등록 심사관' -or $taskNewUser.bureau -ne '수정한 심사국' -or $taskNewUser.division -ne '화면 등록 심사과' -or $taskNewUser.active -or 'ai' -notin $taskNewUser.roles -or $taskNewUser.version -ne 2) {throw '기존 사용자 관리에서 소속·역할·비활성화 변경이 저장되지 않았습니다.'}
     $taskSecondUser=@(Get-Users -Context $taskContext | Where-Object {$_.name -eq '연속 등록 심사관'})

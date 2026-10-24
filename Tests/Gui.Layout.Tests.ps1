@@ -46,11 +46,11 @@ try {
     $controls.AdminContentHost.Content=$adminView
     $controls.IdentityText.Text='심사관 · 심사국 / 심사과'
     $controls.CaseTitle.Text='10-2026-0000123'
-    $controls.CaseSubtitle.Text='선행기술조사 · ChatGPT · 클로드 입력 완료'
+    $controls.CaseSubtitle.Text='ChatGPT · 클로드 입력 완료'
     $controls.WorkflowHintText.Text='AI 검색 결과 평가 · 왼쪽 출원을 선택하면 바로 평가할 수 있습니다.'
-    $controls.EvaluationStateText.Text='선행기술조사와 AI 검색 결과를 비교해 순위를 선택하세요. 대기 중인 방식은 검색 결과가 입력되면 평가할 수 있습니다.'
+    $controls.EvaluationStateText.Text='선행기술조사는 결과 입력 없이 품질 순위만 비교합니다. 문헌별 평가는 입력된 AI 검색 결과에만 작성하세요.'
     $rankRows=@(foreach ($name in @('선행기술조사','ChatGPT','클로드')) {[pscustomobject]@{sourceName=$name;choice='1';notDelivered=$false;noResults=$false}})
-    $ratingRows=@(foreach ($source in @('선행기술조사','ChatGPT','클로드')) {foreach ($index in 1..7) {[pscustomobject]@{sourceName=$source;identifier=('10-2025-{0:0000000}' -f $index);scoreText='';citedText='';note=''}}})
+    $ratingRows=@(foreach ($source in @('ChatGPT','클로드')) {foreach ($index in 1..7) {[pscustomobject]@{sourceName=$source;identifier=('10-2025-{0:0000000}' -f $index);scoreText='';citedText='';note=''}}})
     $controls.RankGrid.ItemsSource=$rankRows
     $controls.RatingsGrid.ItemsSource=$ratingRows
     $controls.PublishedGrid.ItemsSource=$ratingRows
@@ -83,7 +83,7 @@ try {
             Assert-Layout ((Point-In $ratings $scroll).Y+$ratings.ActualHeight -le $scroll.ViewportHeight+1) 'Page scrolling cannot reach the bottom of the ratings list.'
             $ratings.ScrollIntoView($ratingRows[-1]);Update-LayoutTest
             $lastRow=$ratings.ItemContainerGenerator.ContainerFromItem($ratingRows[-1])
-            Assert-Layout ($null -ne $lastRow) 'The last of 21 documents cannot be reached.'
+            Assert-Layout ($null -ne $lastRow) 'The last of 14 AI documents cannot be reached.'
             $rowPoint=Point-In $lastRow $scroll
             Assert-Layout ($rowPoint.Y -ge -1 -and $rowPoint.Y+$lastRow.ActualHeight -le $scroll.ViewportHeight+1) 'Last document row is hidden after scrolling.'
             Assert-ButtonVisible $controls.SaveEvaluationButton
@@ -93,7 +93,7 @@ try {
                 Save-LayoutImage 'Evaluation-1366-Top'
             }
         }
-        Write-Output "PASS $role review at four window sizes: 3 comparison methods, 21 documents, minimum list heights, reachable rows and pinned save"
+        Write-Output "PASS $role review at four window sizes: 3 comparison methods, 14 AI documents, minimum list heights, reachable rows and pinned save"
     }
     # Wheel over a list must move the surrounding page when the list is clipped.
     $controls.EvaluationScroll.ScrollToTop();Update-LayoutTest

@@ -137,7 +137,7 @@ try {
     $null = Save-Evaluation -Context $examinerContext -Case $realCase -ExpectedVersion 0 -RequestId ([guid]::NewGuid().ToString('N')) -DeliveryVersions @{ S01 = 0; S02 = 0; S03 = $realDelivery.version } -DocumentRatings @(
         [pscustomobject]@{ sourceId = 'S03'; documentId = 'D001'; score = 0; cited = $false; note = '=비고' },
         [pscustomobject]@{ sourceId = 'S03'; documentId = 'D002'; score = 5; cited = $true; note = '번호로만 등록한 문헌' }
-    )
+    ) -Rankings @(@{sourceId='S01';rank=1;status='Ranked'},@{sourceId='S03';rank=2;status='Ranked'})
     $examinerMaster = @(Get-Users -Context $adminContext | Where-Object { $_.userId -eq 'U002' })[0]
     $examinerMaster.bureau = '변경한 심사국'
     $examinerMaster.division = '변경한 심사과'
@@ -149,6 +149,9 @@ try {
     try {
         Assert-ExportTest ((Read-ExportZipEntry $zip 'xl/worksheets/sheet1.xml').Contains('평가 중')) 'A partial evaluation is labelled as in progress.'
         Assert-ExportCaseFields -Archive $zip -Bureau '기계금속심사국' -Division '로봇자동화심사과' -Cpc 'G06F 16/00'
+        [xml]$realRankSheet = Read-ExportZipEntry $zip 'xl/worksheets/sheet3.xml'
+        $generalRankRow=@($realRankSheet.GetElementsByTagName('row') | Where-Object {$_.InnerText.Contains('선행기술조사')})
+        Assert-ExportTest ($generalRankRow.Count -eq 1 -and $generalRankRow[0].InnerText.Contains('Ranked')) 'Ranking-only general search is exported without a delivery.'
         [xml]$realDocumentSheet = Read-ExportZipEntry $zip 'xl/worksheets/sheet2.xml'
         Assert-ExportTest ($realDocumentSheet.DocumentElement.InnerText.Contains('=실제 납품')) 'Historical document titles remain available in the document list.'
         [xml]$realRatingSheet = Read-ExportZipEntry $zip 'xl/worksheets/sheet4.xml'
